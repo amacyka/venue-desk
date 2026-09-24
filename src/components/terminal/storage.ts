@@ -2,15 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Plan } from "@/config/plans";
-import type { FiatId } from "@/config/sources";
+import type { FiatId, LiveVenueId } from "@/config/sources";
 
-export type Favorite = { venue: "binance" | "bybit"; fiat: FiatId };
+export type Favorite = { venue: LiveVenueId; fiat: FiatId };
 export type AlertKind = "price" | "liquidity" | "ads" | "spread" | "threshold";
 export type AlertRule = {
   id: string;
   enabled: boolean;
   kind: AlertKind;
-  venue: "binance" | "bybit";
+  venue: LiveVenueId;
   fiat: FiatId;
   side: "buy" | "sell";
   threshold: string;

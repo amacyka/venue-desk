@@ -1,6 +1,7 @@
 import type { LiveVenueId } from "@/config/sources";
 import { loadBinanceBooks } from "./binance-p2p";
 import { loadBybitBooks } from "./bybit-p2p";
+import { loadWalletBooks } from "./wallet-p2p";
 import { toHistoryPoint, type HistoryPoint } from "./overview";
 import type { BookSide } from "./p2p-view";
 import { recordHistory } from "./p2p-history";
@@ -19,7 +20,8 @@ const inflight = new Map<LiveVenueId, Promise<VenueBooks>>();
 
 async function fetchVenue(id: LiveVenueId): Promise<VenueBooks> {
   try {
-    const loaded = id === "binance" ? await loadBinanceBooks() : await loadBybitBooks();
+    const loaded =
+      id === "binance" ? await loadBinanceBooks() : id === "bybit" ? await loadBybitBooks() : await loadWalletBooks();
     const value: VenueBooks = { id, ...loaded };
     const points = value.books
       .map((book) => toHistoryPoint(id, book, value.fetchedAt))

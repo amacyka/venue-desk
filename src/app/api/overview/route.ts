@@ -10,11 +10,11 @@ export async function GET(request: Request) {
   const fresh = url.searchParams.get("fresh") === "1";
   const payment = (url.searchParams.get("payment") ?? "").trim();
   const period: PeriodId = isPeriod(url.searchParams.get("period") ?? "") ? (url.searchParams.get("period") as PeriodId) : "24h";
-  const requested = (url.searchParams.get("venues") ?? "binance,bybit")
+  const requested = (url.searchParams.get("venues") ?? "binance,bybit,wallet")
     .split(",")
     .map((item) => item.trim())
     .filter(isLiveVenue);
-  const venues = requested.length ? [...new Set(requested)] : (["binance", "bybit"] as LiveVenueId[]);
+  const venues = requested.length ? [...new Set(requested)] : (["binance", "bybit", "wallet"] as LiveVenueId[]);
 
   const loaded = await Promise.all(venues.map((id) => loadVenueBooks(id, fresh)));
   const history = withinPeriod(await readHistory(), period).filter((point) => venues.includes(point.venue));

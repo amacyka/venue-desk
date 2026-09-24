@@ -178,7 +178,7 @@ function ExchangeBoard() {
     <section className="grid gap-3">
       <div>
         <h2 className="text-base font-medium">Биржи и P2P-рынки</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Четыре источника. Цифры есть только там, где подключён список объявлений.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Пять источников. Цифры есть только там, где подключён список объявлений.</p>
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
         {SOURCE_IDS.map((id) => (

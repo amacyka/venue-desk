@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { FIAT_META, supportsFiat, type FiatId } from "@/config/sources";
+import { FIAT_META, isLiveVenue, supportsFiat, type FiatId } from "@/config/sources";
 import { useMarket } from "./market";
 import { useAlerts, type AlertKind, type AlertRule } from "./storage";
 import { PageIntro, Panel, StateBlock } from "./widgets";
@@ -76,7 +76,7 @@ export function NotificationsScreen() {
                   <select
                     value={rule.venue}
                     onChange={(event) => {
-                      const venue = event.target.value === "bybit" ? "bybit" : "binance";
+                      const venue = isLiveVenue(event.target.value) ? event.target.value : "binance";
                       update(setAlerts, rule.id, {
                         venue,
                         fiat: supportsFiat(venue, rule.fiat) ? rule.fiat : "TRY",
@@ -86,6 +86,7 @@ export function NotificationsScreen() {
                   >
                     <option value="binance">Binance P2P</option>
                     <option value="bybit">Bybit P2P</option>
+                    <option value="wallet">Wallet P2P</option>
                   </select>
                 </label>
                 <label className="grid gap-1 text-xs text-muted-foreground">

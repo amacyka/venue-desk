@@ -1,9 +1,10 @@
-export const LIVE_VENUES = ["binance", "bybit"] as const;
-export const SOURCE_IDS = ["binance", "bybit", "cryptobot", "xrocket"] as const;
+export const LIVE_VENUES = ["binance", "bybit", "wallet"] as const;
+export const SOURCE_IDS = ["binance", "bybit", "wallet", "cryptobot", "xrocket"] as const;
 export const FIATS = ["TRY", "INR", "RUB"] as const;
 export const VENUE_FIATS = {
   binance: ["TRY", "INR"],
   bybit: ["TRY", "INR", "RUB"],
+  wallet: ["TRY", "INR", "RUB"],
 } as const;
 export const PERIODS = [
   { id: "1h", label: "1 час", ms: 60 * 60 * 1000 },
@@ -24,6 +25,7 @@ export const SOURCE_META: Record<
 > = {
   binance: { name: "Binance P2P", short: "Binance", mark: "B", connected: true },
   bybit: { name: "Bybit P2P", short: "Bybit", mark: "Y", connected: true },
+  wallet: { name: "Wallet P2P", short: "Wallet", mark: "W", connected: true },
   cryptobot: {
     name: "Crypto Bot",
     short: "Crypto Bot",
@@ -53,7 +55,7 @@ export function isSourceId(value: string): value is SourceId {
 }
 
 export function isLiveVenue(value: string): value is LiveVenueId {
-  return value === "binance" || value === "bybit";
+  return (LIVE_VENUES as readonly string[]).includes(value);
 }
 
 export function isFiat(value: string): value is FiatId {

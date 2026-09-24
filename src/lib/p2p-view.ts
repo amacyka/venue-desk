@@ -1,3 +1,5 @@
+import type { LiveVenueId } from "@/config/sources";
+
 export const QUOTE_USDT = 100;
 export const PRICE_BAND = 0.01;
 
@@ -87,7 +89,7 @@ export type SideBook = {
 };
 
 export type P2pSnapshot = {
-  venue: "binance" | "bybit";
+  venue: LiveVenueId;
   fetchedAt: string;
   asset: "USDT";
   activityHint: string;

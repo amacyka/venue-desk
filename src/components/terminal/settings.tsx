@@ -28,6 +28,7 @@ export function SettingsScreen() {
         <div className="mt-4 grid gap-4">
           <SourceCopy name={SOURCE_META.binance.name} text="Публичный список P2P USDT к лире и рупии. Рубль с Bybit сюда не подставляется. Ключ не нужен." />
           <SourceCopy name={SOURCE_META.bybit.name} text="Публичный список объявлений USDT к лире, рупии и рублю. Способы оплаты приходят кодами, без названий банков." />
+          <SourceCopy name={SOURCE_META.wallet.name} text="Официальный P2P API Telegram Wallet: объявления USDT к лире, рупии и рублю. Нужен ключ WALLET_P2P_API_KEY на сервере; данные обновляются раз в 30 секунд." />
           <SourceCopy name={SOURCE_META.cryptobot.name} text={SOURCE_META.cryptobot.reason ?? ""} />
           <SourceCopy name={SOURCE_META.xrocket.name} text={SOURCE_META.xrocket.reason ?? ""} />
         </div>
