@@ -3,7 +3,10 @@ import path from "node:path";
 import { isFiat, isLiveVenue } from "@/config/sources";
 import type { HistoryPoint } from "./overview";
 
-const FILE = path.join(process.cwd(), "data", "p2p-history.json");
+// On Vercel the project folder is read-only; only /tmp is writable (and it is not permanent).
+const FILE = process.env.VERCEL
+  ? path.join("/tmp", "data", "p2p-history.json")
+  : path.join(process.cwd(), "data", "p2p-history.json");
 const GAP_MS = 60_000;
 const MAX_POINTS = 2000;
 
@@ -48,7 +51,8 @@ export function readHistory(): Promise<HistoryPoint[]> {
 }
 
 export function recordHistory(points: HistoryPoint[]): Promise<void> {
-  const job = chain.then(() => append(points));
+  // Saving history must never break the live prices.
+  const job = chain.then(() => append(points)).catch(() => undefined);
   chain = job.catch(() => undefined);
   return job;
 }
