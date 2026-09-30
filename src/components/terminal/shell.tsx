@@ -4,7 +4,7 @@ import { FIATS, SOURCE_IDS, SOURCE_META, FIAT_META, PERIODS, isFiat, isLiveVenue
 import { formatAge, formatClock } from "@/lib/format";
 import { paymentLabel } from "@/lib/overview";
 import { cn } from "@/lib/utils";
-import { Activity, ArrowLeftRight, Bell, CreditCard, Home, LineChart, RefreshCw, Settings, Star } from "lucide-react";
+import { Activity, ArrowLeftRight, Bell, CreditCard, Home, LineChart, RefreshCw, Search, Settings, Star } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -13,6 +13,7 @@ import { useAlerts, useProfileName } from "./storage";
 
 const NAV = [
   { href: "/", label: "Главная", icon: Home },
+  { href: "/search", label: "Поиск", icon: Search },
   { href: "/analytics", label: "Аналитика", icon: LineChart },
   { href: "/compare", label: "Сравнение", icon: ArrowLeftRight },
   { href: "/monitoring", label: "Мониторинг", icon: Activity },
