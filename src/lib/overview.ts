@@ -1,5 +1,6 @@
 import { FIAT_META, isFiat, periodById, type FiatId, type LiveVenueId, type PeriodId } from "@/config/sources";
 import { buildFiatAnalytics, filterPage, headline, type BookSide, type P2pFiatAnalytics } from "./p2p-view";
+import type { VolumeSummary } from "./volume";
 
 export type HistoryPoint = {
   at: string;
@@ -21,6 +22,8 @@ export type MarketPayload = {
   name: string;
   payments: string[];
   view: P2pFiatAnalytics;
+  // Estimated 24h traded volume from snapshots; "buy" = what people bought from sellers.
+  volume?: { buy: VolumeSummary | null; sell: VolumeSummary | null };
 };
 
 export type VenuePayload = {
@@ -42,6 +45,7 @@ export type OverviewResponse = {
   history: HistoryPoint[];
   venues: VenuePayload[];
   notes: string[];
+  volumeTracking?: "on" | "no-store";
 };
 
 export function paymentLabel(id: string): string {

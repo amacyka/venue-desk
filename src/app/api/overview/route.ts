@@ -1,7 +1,10 @@
+import { after } from "next/server";
 import { isLiveVenue, isPeriod, SOURCE_META, type LiveVenueId, type PeriodId } from "@/config/sources";
 import { presentBook, venueStatus, withinPeriod, type OverviewResponse } from "@/lib/overview";
 import { loadVenueBooks } from "@/lib/p2p-feed";
 import { readHistory } from "@/lib/p2p-history";
+import { storeReady } from "@/lib/store";
+import { marketKey, readAggregate, runSnapshot, summarize } from "@/lib/volume";
 
 export const dynamic = "force-dynamic";
 
@@ -17,11 +20,19 @@ export async function GET(request: Request) {
   const venues = requested.length ? [...new Set(requested)] : (["binance", "bybit", "wallet"] as LiveVenueId[]);
 
   const loaded = await Promise.all(venues.map((id) => loadVenueBooks(id, fresh)));
-  const history = withinPeriod(await readHistory(), period).filter((point) => venues.includes(point.venue));
+  const history = withinPeriod(await readHistory(venues), period).filter((point) => venues.includes(point.venue));
+  const tracking = storeReady();
+  const aggregate = tracking ? await readAggregate() : null;
+  // Every visit also nudges the minute snapshot (a lock keeps it to one run per minute), so volume keeps
+  // counting even between the external scheduler's calls.
+  if (tracking) after(() => runSnapshot((id) => loadVenueBooks(id)).catch(() => undefined));
   const notes = [
     "Средняя цена — весь стакан: каждое объявление входит пропорционально остатку USDT. На Bybit первая страница списка в эту среднюю не входит. Если у рынка только одна страница, она остаётся в расчёте.",
-    "Ликвидность — объём в пределах 1% от лучшей цены. С каждого объявления в эту сумму входит не больше 100 USDT и только если оно принимает такой набор. Число объявлений без фильтра оплаты — размер всего списка.",
-    "Оборот завершённых сделок эти списки не отдают. Разница цен между площадками не гарантирует исполнение.",
+    "Ликвидность — весь доступный USDT в объявлениях в пределах 2% от лучшей цены. У объявлений покупателей за каждым нет депозита, поэтому одно такое объявление считается не больше чем на 10 000 USDT. Число объявлений без фильтра оплаты — размер всего списка.",
+    tracking
+      ? "Объём за 24 часа — оценка: сайт раз в минуту фотографирует стакан и складывает, насколько уменьшились остатки в объявлениях. Отменённые ордера (остаток вернулся в течение 30 минут) вычитаются, пополнения и удалённые объявления не считаются."
+      : "Объём за 24 часа появится после подключения хранилища Upstash: сайту нужно где-то копить снимки стакана.",
+    "Разница цен между площадками не гарантирует исполнение.",
   ];
   if (payment) {
     notes.push("Фильтр оплаты режет загруженный список. История графика копится без этого фильтра.");
@@ -34,10 +45,16 @@ export async function GET(request: Request) {
     payment,
     history,
     notes,
+    volumeTracking: tracking ? "on" : "no-store",
     venues: loaded.map((venue) => {
       const markets = venue.books.flatMap((book) => {
         const market = presentBook(book, payment);
-        return market ? [market] : [];
+        if (!market) return [];
+        market.volume = {
+          buy: summarize(aggregate, marketKey(venue.id, market.fiat, "buy")),
+          sell: summarize(aggregate, marketKey(venue.id, market.fiat, "sell")),
+        };
+        return [market];
       });
       return {
         id: venue.id,

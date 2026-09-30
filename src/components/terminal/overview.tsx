@@ -94,6 +94,15 @@ function VenueBlock({ venue }: { venue: VenuePayload }) {
   const buyLiquidity = sideLiquidity(view, "buy");
   const sellLiquidity = sideLiquidity(view, "sell");
   const focusLiquidity = filters.side === "buy" ? buyLiquidity : sellLiquidity;
+  const depth = (filters.side === "buy" ? view.depthBuy : view.depthSell) ?? { within1: 0, within2: 0, within5: 0, total: 0, ads: 0 };
+  const volume = filters.side === "buy" ? market.volume?.buy ?? null : market.volume?.sell ?? null;
+  const otherVolume = filters.side === "buy" ? market.volume?.sell ?? null : market.volume?.buy ?? null;
+  const volumeHint =
+    data?.volumeTracking !== "on"
+      ? "Биржи не отдают оборот. Чтобы сайт считал его сам по снимкам стакана, нужно подключить хранилище (Upstash в Vercel)."
+      : volume
+        ? `Оценка по снимкам стакана раз в минуту: на сколько уменьшились остатки в объявлениях, отмены вычтены.${volume.hours < 24 ? ` Данные пока за ${volume.hours} ч.` : ""}`
+        : "Снимки стакана копятся — первые цифры появятся через пару минут.";
   const price = (value: number | null) => (value === null ? "—" : formatPrice(String(value)));
 
   return (
@@ -112,12 +121,18 @@ function VenueBlock({ venue }: { venue: VenuePayload }) {
           period={period}
           value={formatUsdt(focusLiquidity)}
           unit="USDT"
-          hint={filters.side === "buy" ? "До 100 USDT с каждого объявления продавца в пределах 1% от лучшей цены" : "До 100 USDT с каждого объявления покупателя в пределах 1% от лучшей цены"}
+          hint={
+            filters.side === "buy"
+              ? "Сколько USDT продавцы выставили в пределах 2% от лучшей цены"
+              : "Сколько USDT покупатели готовы купить в пределах 2% от лучшей цены (до 10 000 с одного объявления)"
+          }
           delta={changeFor(points, filters.side === "buy" ? "liquidityUsdt" : "liquiditySellUsdt", focusLiquidity)}
           series={points.map((point) => (filters.side === "buy" ? point.liquidityUsdt : point.liquiditySellUsdt))}
           rows={[
-            { label: "К покупке", value: `${formatUsdt(buyLiquidity)} USDT` },
-            { label: "К продаже", value: `${formatUsdt(sellLiquidity)} USDT` },
+            { label: "В пределах 1%", value: `${formatUsdt(depth.within1)} USDT` },
+            { label: "В пределах 5%", value: `${formatUsdt(depth.within5)} USDT` },
+            { label: "Весь стакан", value: `${formatUsdt(depth.total)} USDT` },
+            { label: filters.side === "buy" ? "К продаже (2%)" : "К покупке (2%)", value: `${formatUsdt(filters.side === "buy" ? sellLiquidity : buyLiquidity)} USDT` },
             {
               label: view.trafficScope === "sample" ? "Объявлений в выборке" : "Активных объявлений",
               value: formatCount(view.trafficAds),
@@ -125,15 +140,17 @@ function VenueBlock({ venue }: { venue: VenuePayload }) {
           ]}
         />
         <MetricCard
-          label="Общий объём торгов"
-          period={period}
-          value="—"
-          hint="Фактический оборот завершённых сделок этот источник не отдаёт."
+          label="Объём торгов"
+          period="24 часа"
+          value={volume ? formatUsdt(volume.usdt) : "—"}
+          unit={volume ? "USDT" : undefined}
+          hint={volumeHint}
           series={[]}
           rows={[
-            { label: "В фиате", value: "нет данных" },
-            { label: "В USDT", value: "нет данных" },
-            { label: "Сделок за период", value: "нет в ответе" },
+            { label: "В фиате", value: volume ? `${formatUsdt(volume.fiat)} ${fiat}` : "—" },
+            { label: filters.side === "buy" ? "Продали покупателям" : "Купили у продавцов", value: otherVolume ? `${formatUsdt(otherVolume.usdt)} USDT` : "—" },
+            { label: "Сделок (оценка)", value: volume ? formatCount(volume.fills) : "—" },
+            { label: "Изменений объявлений", value: volume ? formatCount(volume.changes) : "—" },
             { label: "Активность мерчантов", value: formatCount(filters.side === "buy" ? view.activity : view.activitySell) },
           ]}
         />

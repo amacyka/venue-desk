@@ -35,7 +35,7 @@ export function P2pBlock({
                 <Metric
                   label="Ликвидность"
                   value={`${formatQty(String(fiat.liquidityUsdt))} USDT`}
-                  hint="USDT в пределах 1% от лучшей цены покупки"
+                  hint="USDT в пределах 2% от лучшей цены покупки"
                 />
                 <Metric
                   label="Трафик"

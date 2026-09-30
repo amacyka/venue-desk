@@ -62,7 +62,7 @@ export function AnalyticsScreen() {
                   />
                   <SeriesChart
                     title="Ликвидность"
-                    caption="USDT в пределах 1% от лучшей цены, отдельно к покупке и к продаже."
+                    caption="USDT в пределах 2% от лучшей цены (у покупателей — до 10 000 с объявления), отдельно к покупке и к продаже."
                     unit="USDT"
                     period={filters.period}
                     times={times}

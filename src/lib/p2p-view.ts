@@ -2,6 +2,19 @@ import type { LiveVenueId } from "@/config/sources";
 
 export const QUOTE_USDT = 100;
 export const PRICE_BAND = 0.01;
+// Liquidity = USDT really available close to the best price. Buyer ads aren't backed by a deposit,
+// so (like p2p.army) each one counts for at most this much.
+export const LIQUIDITY_BAND = 0.02;
+export const BUYER_AD_CAP = 10_000;
+export const DEPTH_STEPS = [0.01, 0.02, 0.05] as const;
+
+export type Depth = {
+  within1: number;
+  within2: number;
+  within5: number;
+  total: number;
+  ads: number;
+};
 
 export type P2pAd = {
   id?: string;
@@ -53,6 +66,8 @@ export type P2pFiatAnalytics = {
   bookScope: "full" | "partial";
   buyBook: SideBook;
   sellBook: SideBook;
+  depthBuy: Depth; // seller ads: what you can buy
+  depthSell: Depth; // buyer ads: what you can sell (capped per ad)
 };
 
 export const LADDER_USDT = [50, 100, 500, 1000] as const;
@@ -101,6 +116,7 @@ type Level = {
   price: number;
   minQty: number;
   maxQty: number;
+  maxQtyRaw: number; // whole remaining USDT of the ad
   activity: number;
   payments: string[];
 };
@@ -118,6 +134,7 @@ function levels(ads: P2pAd[]): Level[] {
       price,
       minQty,
       maxQty: cap,
+      maxQtyRaw: inventory,
       activity: Math.max(0, ad.activity),
       payments: ad.payments ?? [],
     });
@@ -223,6 +240,23 @@ export function readSide(ads: P2pAd[], side: "buy" | "sell"): SideBook {
   };
 }
 
+// Full available USDT near the best price, not limited to one small order.
+export function bookDepth(ads: P2pAd[], side: "buy" | "sell"): Depth {
+  const cap = side === "sell" ? BUYER_AD_CAP : Infinity;
+  const book = levels(ads).map((level) => ({ price: level.price, qty: Math.min(level.maxQtyRaw, cap) }));
+  const out: Depth = { within1: 0, within2: 0, within5: 0, total: 0, ads: book.length };
+  if (!book.length) return out;
+  const best = side === "buy" ? Math.min(...book.map((l) => l.price)) : Math.max(...book.map((l) => l.price));
+  for (const level of book) {
+    const gap = side === "buy" ? level.price / best - 1 : best / level.price - 1;
+    out.total += level.qty;
+    if (gap <= DEPTH_STEPS[0] + 1e-6) out.within1 += level.qty;
+    if (gap <= DEPTH_STEPS[1] + 1e-6) out.within2 += level.qty;
+    if (gap <= DEPTH_STEPS[2] + 1e-6) out.within5 += level.qty;
+  }
+  return out;
+}
+
 export function executableQuote(ads: P2pAd[], side: "buy" | "sell", size = QUOTE_USDT) {
   const book = ordered(ads, side);
   const best = book[0]?.price ?? null;
@@ -282,15 +316,15 @@ export function buildFiatAnalytics(
   const sellBook = buy ? readSide(buyAds, "sell") : emptySideBook();
   const buyStep = headline(buyBook);
   const sellStep = headline(sellBook);
-  const buyBand = buyBook.bands.find((band) => band.band === PRICE_BAND);
-  const sellBand = sellBook.bands.find((band) => band.band === PRICE_BAND);
+  const depthBuy = bookDepth(sellAds, "buy");
+  const depthSell = bookDepth(buyAds, "sell");
   const payments = [...new Set([...sellAds, ...buyAds].flatMap((ad) => ad.payments ?? []))].sort();
   return {
     fiat,
     title,
     error,
-    liquidityUsdt: buyBand?.usdt ?? 0,
-    liquiditySellUsdt: sellBand?.usdt ?? 0,
+    liquidityUsdt: depthBuy.within2,
+    liquiditySellUsdt: depthSell.within2,
     sampleSize: sellAds.length,
     trafficAds: sampleOnly ? sellAds.length + buyAds.length : (sell?.total ?? 0) + (buy?.total ?? 0),
     sellAds: sampleOnly ? sellAds.length : (sell?.total ?? 0),
@@ -310,5 +344,7 @@ export function buildFiatAnalytics(
     bookScope: sell?.truncated || buy?.truncated ? "partial" : "full",
     buyBook,
     sellBook,
+    depthBuy,
+    depthSell,
   };
 }

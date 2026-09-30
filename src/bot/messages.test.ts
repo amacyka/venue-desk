@@ -36,6 +36,8 @@ function snapshot(venue: "binance" | "bybit", liquidity: number): P2pSnapshot {
         bookScope: "full",
         buyBook: emptySideBook(),
         sellBook: emptySideBook(),
+        depthBuy: { within1: 0, within2: liquidity, within5: 0, total: 0, ads: 0 },
+        depthSell: { within1: 0, within2: 0, within5: 0, total: 0, ads: 0 },
       },
     ],
   };
