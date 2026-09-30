@@ -7,6 +7,7 @@ export const PRICE_BAND = 0.01;
 export const LIQUIDITY_BAND = 0.02;
 export const BUYER_AD_CAP = 10_000;
 export const DEPTH_STEPS = [0.01, 0.02, 0.05] as const;
+export const DEPTH_ANCHOR_USDT = 1_000;
 
 export type Depth = {
   within1: number;
@@ -246,7 +247,18 @@ export function bookDepth(ads: P2pAd[], side: "buy" | "sell"): Depth {
   const book = levels(ads).map((level) => ({ price: level.price, qty: Math.min(level.maxQtyRaw, cap) }));
   const out: Depth = { within1: 0, within2: 0, within5: 0, total: 0, ads: book.length };
   if (!book.length) return out;
-  const best = side === "buy" ? Math.min(...book.map((l) => l.price)) : Math.max(...book.map((l) => l.price));
+  // The band starts at the first price with real volume behind it, so one tiny ad at an odd price
+  // (a few USDT far below the market) doesn't make the rest of the book look out of range.
+  book.sort((a, b) => (side === "buy" ? a.price - b.price : b.price - a.price));
+  let best = book[book.length - 1]!.price;
+  let running = 0;
+  for (const level of book) {
+    running += level.qty;
+    if (running >= DEPTH_ANCHOR_USDT) {
+      best = level.price;
+      break;
+    }
+  }
   for (const level of book) {
     const gap = side === "buy" ? level.price / best - 1 : best / level.price - 1;
     out.total += level.qty;
