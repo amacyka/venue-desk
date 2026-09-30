@@ -48,7 +48,7 @@ const num = (value: unknown): number | null => {
 };
 const str = (value: unknown): string => (typeof value === "string" ? value : value == null ? "" : String(value));
 
-function finish(partial: Omit<SearchAd, "analysis" | "amountConflict" | "methods"> & { labels: string[] }): SearchAd {
+function finish(partial: Omit<SearchAd, "analysis" | "amountConflict" | "methods" | "payments"> & { labels: string[] }): SearchAd {
   const { labels, ...rest } = partial;
   const payments: string[] = [];
   const methods: string[] = [];
