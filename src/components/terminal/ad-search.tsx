@@ -1,19 +1,22 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { FIAT_META, SOURCE_META, isLiveVenue, supportsFiat, type LiveVenueId } from "@/config/sources";
+import { FIATS, FIAT_META, LIVE_VENUES, SOURCE_META, isLiveVenue, supportsFiat, type LiveVenueId } from "@/config/sources";
 import { normalize } from "@/lib/ads/analyze";
 import type { AdSearchResult, AdSide, SearchAd } from "@/lib/ads/collect";
 import { cn } from "@/lib/utils";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMarket } from "./market";
 import { PageIntro, Panel, StateBlock } from "./widgets";
 
 type ThirdFilter = "any" | "accepted" | "not-rejected" | "rejected";
+type FixedMode = "all" | "fixed" | "free";
+type SortKey = "price" | "available" | "orders" | "completion";
 
 type Filters = {
-  side: AdSide;
   amount: string;
+  fixedMode: FixedMode;
+  sort: SortKey;
   priceMin: string;
   priceMax: string;
   third: ThirdFilter;
@@ -30,8 +33,9 @@ type Filters = {
 };
 
 const START: Filters = {
-  side: "buy",
   amount: "",
+  fixedMode: "all",
+  sort: "price",
   priceMin: "",
   priceMax: "",
   third: "any",
@@ -66,13 +70,54 @@ function allBanks(ad: SearchAd): string[] {
   return [...new Set([...ad.payments, ...ad.analysis.banksMentioned])];
 }
 
+const STORE_KEY = "srez.search";
+
+function readStored(): Filters {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) return { ...START, ...(JSON.parse(raw) as Partial<Filters>) };
+  } catch {
+    // private window or blocked storage: start clean
+  }
+  return START;
+}
+
+// The amount the user wants must fit the ad's limits and whatever the terms say about amounts.
+function amountFits(ad: SearchAd, amount: number): boolean {
+  if (ad.minFiat !== null && amount < ad.minFiat) return false;
+  if (ad.maxFiat !== null && amount > ad.maxFiat) return false;
+  if (amount / ad.price > ad.availableUsdt + 1e-9) return false;
+  const terms = ad.analysis.amounts;
+  if (terms.fixed.length && !terms.fixed.some((value) => Math.abs(value - amount) <= Math.max(1, value * 0.005))) return false;
+  if (terms.multipleOf && amount % terms.multipleOf !== 0) return false;
+  if (terms.minAmount && amount < terms.minAmount) return false;
+  return true;
+}
+
+function sortAds(list: SearchAd[], key: SortKey, side: AdSide): SearchAd[] {
+  const byPrice = (a: SearchAd, b: SearchAd) => (side === "buy" ? a.price - b.price : b.price - a.price);
+  return list.sort((a, b) => {
+    if (key === "available") return b.availableUsdt - a.availableUsdt || byPrice(a, b);
+    if (key === "orders") return (b.orders ?? 0) - (a.orders ?? 0) || byPrice(a, b);
+    if (key === "completion") return (b.completion ?? 0) - (a.completion ?? 0) || byPrice(a, b);
+    return byPrice(a, b);
+  });
+}
+
+function amountLabel(ad: SearchAd): string | null {
+  const t = ad.analysis.amounts;
+  if (t.fixed.length) return `Сумма строго: ${t.fixed.map((v) => nf.format(v)).join(" / ")} ${ad.fiat}`;
+  if (t.multipleOf) return `Сумма кратна ${nf.format(t.multipleOf)} ${ad.fiat}`;
+  if (t.minAmount) return `Сумма от ${nf.format(t.minAmount)} ${ad.fiat}`;
+  return null;
+}
+
 function matches(ad: SearchAd, f: Filters): boolean {
   const amount = toNum(f.amount);
-  if (amount !== null) {
-    if (ad.minFiat !== null && amount < ad.minFiat) return false;
-    if (ad.maxFiat !== null && amount > ad.maxFiat) return false;
-    if (amount / ad.price > ad.availableUsdt + 1e-9) return false;
-  }
+  if (amount !== null && !amountFits(ad, amount)) return false;
+  const hasFixed = ad.analysis.amounts.fixed.length > 0;
+  if (f.fixedMode === "fixed" && !hasFixed) return false;
+  if (f.fixedMode === "free" && hasFixed) return false;
   const pMin = toNum(f.priceMin);
   const pMax = toNum(f.priceMax);
   if (pMin !== null && ad.price < pMin) return false;
@@ -102,13 +147,38 @@ function matches(ad: SearchAd, f: Filters): boolean {
 }
 
 export function AdSearchScreen() {
-  const { filters: market } = useMarket();
-  const venues = market.venues.filter(isLiveVenue).filter((id) => supportsFiat(id, market.fiat));
+  const { filters: market, setFilter } = useMarket();
+  const side: AdSide = market.side === "sell" ? "sell" : "buy";
+  const chosen = market.venues.filter(isLiveVenue);
+  const venues = chosen.filter((id) => supportsFiat(id, market.fiat));
+  const skipped = chosen.filter((id) => !supportsFiat(id, market.fiat));
   const [f, setF] = useState<Filters>(START);
+
+  // Stored filters are read after mount so the server-rendered page and the first client render match.
+  useEffect(() => {
+    setF(readStored());
+  }, []);
+
+  const update = useCallback((next: Filters) => {
+    setF(next);
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(next));
+    } catch {
+      // storage unavailable: filters just won't be remembered
+    }
+  }, []);
+
+  function toggleVenue(id: LiveVenueId) {
+    const others = market.venues.filter((v) => v !== id);
+    const next = market.venues.includes(id) ? others : [...market.venues, id];
+    if (!next.some(isLiveVenue)) return;
+    setFilter({ venues: next });
+  }
   const [results, setResults] = useState<AdSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [shown, setShown] = useState(40);
   const venueKey = venues.join(",");
+  const request = useRef(0);
 
   const load = useCallback(
     async (fresh = false) => {
@@ -117,9 +187,10 @@ export function AdSearchScreen() {
         return;
       }
       setLoading(true);
+      const id = ++request.current;
       const list = await Promise.all(
         venueKey.split(",").map(async (venue) => {
-          const q = new URLSearchParams({ venue, fiat: market.fiat, side: f.side });
+          const q = new URLSearchParams({ venue, fiat: market.fiat, side });
           if (fresh) q.set("fresh", "1");
           try {
             const res = await fetch(`/api/ads?${q.toString()}`);
@@ -128,7 +199,7 @@ export function AdSearchScreen() {
             return {
               venue: venue as LiveVenueId,
               fiat: market.fiat,
-              side: f.side,
+              side,
               fetchedAt: new Date().toISOString(),
               error: "Не удалось загрузить",
               notes: [],
@@ -137,11 +208,12 @@ export function AdSearchScreen() {
           }
         }),
       );
+      if (id !== request.current) return; // a newer search replaced this one
       setResults(list);
       setLoading(false);
       setShown(40);
     },
-    [venueKey, market.fiat, f.side],
+    [venueKey, market.fiat, side],
   );
 
   useEffect(() => {
@@ -149,50 +221,102 @@ export function AdSearchScreen() {
   }, [load]);
 
   const all = useMemo(() => results.flatMap((r) => r.ads), [results]);
-  const found = useMemo(() => {
-    const list = all.filter((ad) => matches(ad, f));
-    return list.sort((a, b) => (f.side === "buy" ? a.price - b.price : b.price - a.price));
-  }, [all, f]);
-  const banks = useMemo(() => [...new Set(all.flatMap(allBanks))].sort((a, b) => a.localeCompare(b, "ru")), [all]);
+  const found = useMemo(() => sortAds(all.filter((ad) => matches(ad, f)), f.sort, side), [all, f, side]);
+  const fixedCount = useMemo(() => all.filter((ad) => ad.analysis.amounts.fixed.length > 0).length, [all]);
+  const banks = useMemo(() => {
+    const list = new Set(all.flatMap(allBanks));
+    if (f.bank) list.add(f.bank); // keep a remembered choice visible even if today's list lacks it
+    return [...list].sort((a, b) => a.localeCompare(b, "ru"));
+  }, [all, f.bank]);
   const stats = useMemo(() => {
     const s = { accepted: 0, rejected: 0, unknown: 0 };
     for (const ad of found) s[ad.analysis.thirdParty] += 1;
     return s;
   }, [found]);
-  const set = <K extends keyof Filters>(key: K, value: Filters[K]) => setF((current) => ({ ...current, [key]: value }));
+  const set = <K extends keyof Filters>(key: K, value: Filters[K]) => update({ ...f, [key]: value });
 
   return (
     <div className="grid gap-5">
       <PageIntro
         eyebrow="Поиск"
         title="Поиск объявлений"
-        text="Все объявления выбранных бирж с разбором условий: третьи лица, банки, чек, требования к покупателю. Биржа и валюта — в фильтре сверху."
+        text="Все объявления выбранных бирж с разбором условий: третьи лица, банки, сумма, чек, требования к покупателю."
       />
 
       <Panel className="grid gap-4 p-4 md:p-5">
-        <div className="flex flex-wrap gap-2">
-          {(["buy", "sell"] as AdSide[]).map((side) => (
-            <button
-              key={side}
-              type="button"
-              aria-pressed={f.side === side}
-              onClick={() => set("side", side)}
-              className={cn(
-                "min-h-11 rounded-[12px] border px-4 text-sm",
-                f.side === side ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-muted",
-              )}
-            >
-              {side === "buy" ? "Я покупаю USDT" : "Я продаю USDT"}
-            </button>
-          ))}
-          <Button type="button" variant="outline" className="min-h-11" onClick={() => void load(true)} disabled={loading}>
-            {loading ? "Загружаю…" : "Обновить"}
-          </Button>
+        <div className="grid gap-3 md:grid-cols-[auto_auto_1fr] md:items-end">
+          <div className="grid gap-1 text-xs text-muted-foreground">
+            Биржи
+            <div className="flex flex-wrap gap-1.5">
+              {LIVE_VENUES.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={market.venues.includes(id)}
+                  onClick={() => toggleVenue(id)}
+                  className={cn(
+                    "min-h-11 rounded-[12px] border px-3 text-sm",
+                    market.venues.includes(id) ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  {SOURCE_META[id].short}
+                </button>
+              ))}
+            </div>
+          </div>
+          <Field label="Валюта">
+            <select value={market.fiat} onChange={(e) => setFilter({ fiat: e.target.value as typeof market.fiat })} className={inputCls}>
+              {FIATS.map((fiat) => (
+                <option key={fiat} value={fiat}>
+                  {FIAT_META[fiat].name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="flex flex-wrap gap-1.5">
+            {(["buy", "sell"] as AdSide[]).map((s) => (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={side === s}
+                onClick={() => setFilter({ side: s })}
+                className={cn(
+                  "min-h-11 rounded-[12px] border px-4 text-sm",
+                  side === s ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {s === "buy" ? "Я покупаю USDT" : "Я продаю USDT"}
+              </button>
+            ))}
+            <Button type="button" variant="outline" className="min-h-11" onClick={() => void load(true)} disabled={loading}>
+              {loading ? "Загружаю…" : "Обновить"}
+            </Button>
+          </div>
         </div>
+        {skipped.length ? (
+          <p className="text-xs text-muted-foreground">
+            {skipped.map((id) => SOURCE_META[id].short).join(", ")}: {FIAT_META[market.fiat].name.toLowerCase()} на этой площадке не подключена.
+          </p>
+        ) : null}
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label={`Сумма сделки, ${market.fiat}`}>
+          <Field label={`Моя сумма, ${market.fiat} (лимиты + сумма из условий)`}>
             <input inputMode="decimal" value={f.amount} onChange={(e) => set("amount", e.target.value)} placeholder="например 50000" className={inputCls} />
+          </Field>
+          <Field label="Сумма в условиях">
+            <select value={f.fixedMode} onChange={(e) => set("fixedMode", e.target.value as FixedMode)} className={inputCls}>
+              <option value="all">Все объявления</option>
+              <option value="fixed">Только со строгой суммой ({fixedCount})</option>
+              <option value="free">Без строгой суммы</option>
+            </select>
+          </Field>
+          <Field label="Сортировка">
+            <select value={f.sort} onChange={(e) => set("sort", e.target.value as SortKey)} className={inputCls}>
+              <option value="price">Лучшая цена</option>
+              <option value="available">Больше доступно USDT</option>
+              <option value="orders">Больше сделок у продавца</option>
+              <option value="completion">Выше % выполнения</option>
+            </select>
           </Field>
           <Field label="Цена от">
             <input inputMode="decimal" value={f.priceMin} onChange={(e) => set("priceMin", e.target.value)} className={inputCls} />
@@ -240,14 +364,14 @@ export function AdSearchScreen() {
           <Check label="Скрыть, где нужен чек" value={f.hideReceipt} onChange={(v) => set("hideReceipt", v)} />
           <Check label="Скрыть видео / скрин ЛК" value={f.hideVideo} onChange={(v) => set("hideVideo", v)} />
           <Check label="Скрыть требующих KYC" value={f.hideKyc} onChange={(v) => set("hideKyc", v)} />
-          <button type="button" className="min-h-9 text-primary" onClick={() => setF({ ...START, side: f.side })}>
+          <button type="button" className="min-h-9 text-primary" onClick={() => update(START)}>
             Сбросить фильтры
           </button>
         </div>
       </Panel>
 
       {venues.length === 0 ? (
-        <StateBlock title="Нет площадки для этой валюты" text="Включите в фильтре «Биржа» сверху Binance, Bybit или Wallet с поддержкой выбранной валюты." />
+        <StateBlock title="Нет площадки для этой валюты" text="Выберите выше биржу, на которой есть эта валюта: рубль — Bybit и Wallet, лира и рупия — все три." />
       ) : null}
 
       {results.map((r) =>
@@ -264,7 +388,7 @@ export function AdSearchScreen() {
           <span className="text-primary">принимают третьих лиц: {stats.accepted}</span> ·{" "}
           <span className="text-destructive">не принимают: {stats.rejected}</span> · <span className="text-muted-foreground">не указано: {stats.unknown}</span>
         </p>
-        <p className="text-xs text-muted-foreground">{FIAT_META[market.fiat].name} · сортировка по лучшей цене</p>
+        <p className="text-xs text-muted-foreground">{FIAT_META[market.fiat].name} · со строгой суммой: {fixedCount}</p>
       </div>
 
       {loading && !all.length ? <Panel className="p-5 text-sm text-muted-foreground">Загружаю объявления и условия… Binance может отвечать до 20 секунд.</Panel> : null}
@@ -368,6 +492,8 @@ function AdCard({ ad }: { ad: SearchAd }) {
 
       <div className="flex flex-wrap gap-1.5">
         {third}
+        {amountLabel(ad) ? <Chip tone="warn">{amountLabel(ad)}</Chip> : null}
+        {ad.amountConflict ? <Chip tone="bad">Сумма в условиях вне лимитов объявления</Chip> : null}
         {a.banksOnly ? <Chip tone="warn">только указанные банки</Chip> : null}
         {a.minOrders ? <Chip tone="warn">покупатель от {a.minOrders} сделок</Chip> : null}
         {a.flags.map((flag) => (
@@ -383,10 +509,19 @@ function AdCard({ ad }: { ad: SearchAd }) {
       </div>
 
       <div className="grid gap-1 text-xs">
-        <p>
-          <span className="text-muted-foreground">Оплата: </span>
-          {ad.payments.length ? ad.payments.join(", ") : "—"}
-        </p>
+        {ad.payments.length ? (
+          <p>
+            <span className="text-muted-foreground">Банки в объявлении: </span>
+            {ad.payments.join(", ")}
+          </p>
+        ) : null}
+        {ad.methods.length ? (
+          <p>
+            <span className="text-muted-foreground">Способ на {SOURCE_META[ad.venue].short}: </span>
+            {ad.methods.join(", ")}
+          </p>
+        ) : null}
+        {a.amounts.quote ? <p className="text-muted-foreground">Про сумму: «{a.amounts.quote}»</p> : null}
         {a.banksMentioned.length ? (
           <p>
             <span className="text-muted-foreground">Банки в условиях: </span>

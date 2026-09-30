@@ -9,7 +9,15 @@ export type Flag = {
   quote: string;
 };
 
+export type AmountTerms = {
+  fixed: number[]; // "строго на 29 400", "на суммы 25.000 / 40.000"
+  multipleOf: number | null; // "кратные 5000"
+  minAmount: number | null; // "заходить свыше 1000р"
+  quote: string;
+};
+
 export type AdAnalysis = {
+  amounts: AmountTerms;
   thirdParty: ThirdParty;
   thirdPartyQuote: string;
   banksMentioned: string[];
@@ -113,7 +121,7 @@ const NEG_VERB = rx(
 );
 
 // "Приму от любых лиц", "1-3 лицо", "1-х и 3-х лиц": both the holder and third parties are fine.
-const ANY_OK = rx(/(любых\s+лиц|любого\s+лица|\b1\s*[-\/,и]\s*3\b|\b1[-\s]*[а-я]{0,3}\s+и\s+3|any\s+(person|party|name))/);
+const ANY_OK = rx(/(любых\s+лиц|любого\s+лица|люб\w*\s+лица|все\s+лица|всех\s+лиц|\b1\s*[-\/,и]\s*3\b|\b1[-\s]*[а-я]{0,3}\s+и\s+3|any\s+(person|party|name))/);
 
 // "Only first persons / namesakes" means payments must come from the account holder.
 const FIRST_ONLY = rx(/((\b1|\bперв[а-я]{0,4})[\-\s]*[а-я]{0,3}\s*лиц|однофамил|\bfirst[\s-]*part|\b1st[\s-]*part)/);
@@ -246,6 +254,103 @@ const FLAG_RULES: Array<{ id: string; label: string; re: RegExp }> = ([
   { id: "kyc", label: "Нужна верификация (KYC)", re: /(верифицир|верификац|\bkyc\b|kimlik\s+dogrula|verified\s+(account|users))/ },
 ] as Array<{ id: string; label: string; re: RegExp }>).map((rule) => ({ ...rule, re: rx(rule.re) }));
 
+/* ---------- amounts written in the terms ---------- */
+
+const AMOUNT_TRIGGER = rx(
+  /(заход\w*|выкуп\w*|строго|только|ровно|на\s+сумм\w*|сумм\w*\s*[:(]|кратн\w*|приму\s+только|свыше|\btutar\w*|\bmiktar\w*|exact\w*\s+amount|only\s+amount|amount\s*:)/,
+);
+const MULTIPLE = rx(/(кратн\w*|multiple\s+of|katlari)/);
+const MIN_WORD = rx(/(свыше|не\s+менее|не\s+меньше|\bот|больше|минимум|minimum|\bmin\b|en\s+az|from)\s*$/);
+// Numbers like 29400, 29 400, 92.700, 175 800, 49к, 10 тыс
+const NUMBER = /(\d{1,3}(?:[  .,]\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(к|k|тыс\w*|т\.?\s?р\.?)?(?![\d])/giu;
+// Numbers that are clearly not amounts: counts, percents, minutes, laws ("115-ФЗ")
+const NOT_AMOUNT_AFTER = rx(/^\s*(%|\+?\s*сдел|лиц|отзыв|мин|час|дн|сек|раз|шт|-?\s*фз|-?\s*ф3|usdt|order|ордер\w*\s+(в|за)|islem|gun|p2p)/);
+
+function toAmount(raw: string, suffix: string | undefined): number | null {
+  let digits = raw.replace(/[  ]/g, "");
+  if (/^\d{1,3}([.,]\d{3})+$/.test(digits)) digits = digits.replace(/[.,]/g, "");
+  else digits = digits.replace(",", ".");
+  let value = Number(digits);
+  if (!Number.isFinite(value)) return null;
+  if (suffix && /^(к|k|тыс|т)/i.test(suffix)) value *= 1000;
+  return value;
+}
+
+function numbersIn(line: string): number[] {
+  const out: number[] = [];
+  NUMBER.lastIndex = 0;
+  for (let m = NUMBER.exec(line); m; m = NUMBER.exec(line)) {
+    const after = line.slice(m.index + m[0].length, m.index + m[0].length + 14);
+    if (NOT_AMOUNT_AFTER.test(after)) continue;
+    const value = toAmount(m[1] ?? "", m[2]);
+    if (value === null || value < 100 || value >= 100_000_000) continue;
+    out.push(value);
+  }
+  return out;
+}
+
+export function parseAmounts(remarks: string): AmountTerms {
+  const result: AmountTerms = { fixed: [], multipleOf: null, minAmount: null, quote: "" };
+  const lines = remarks.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    const n = normalize(line);
+    if (!AMOUNT_TRIGGER.test(n)) continue;
+    let nums = numbersIn(n);
+    let quote = line;
+    // "Возможные суммы:" followed by numbers on the next lines
+    if (!nums.length && /[:：]\s*$/.test(n)) {
+      const next = lines.slice(i + 1, i + 4).filter((l) => /^[^a-zа-я]*\d/i.test(normalize(l)));
+      nums = next.flatMap((l) => numbersIn(normalize(l)));
+      if (nums.length) quote = [line, ...next].join(" ");
+    }
+    if (!nums.length) continue;
+    if (MULTIPLE.test(n)) {
+      if (result.multipleOf === null) result.multipleOf = nums[0] ?? null;
+      if (!result.quote) result.quote = clip(quote, 140);
+      continue;
+    }
+    const idx = n.search(/\d/);
+    const strict = rx(/(строго|ровно|только|exact)/).test(n);
+    if (!strict && MIN_WORD.test(n.slice(0, idx))) {
+      if (result.minAmount === null) result.minAmount = nums[0] ?? null;
+      if (!result.quote) result.quote = clip(quote, 140);
+      continue;
+    }
+    for (const value of nums) if (!result.fixed.includes(value) && result.fixed.length < 12) result.fixed.push(value);
+    if (!result.quote || result.quote.length < 3) result.quote = clip(quote, 140);
+  }
+  result.fixed.sort((a, b) => a - b);
+  return result;
+}
+
+/* ---------- one name per bank across exchanges ---------- */
+
+const EXTRA_NAMES: Array<{ name: string; re: RegExp }> = [
+  { name: "СБП", re: /^(sbp|сбп|fast ?payment\w*)$/ },
+  { name: "ПСБ", re: /^(psb|psbank|promsvyaz\w*)$/ },
+  { name: "Ак Барс", re: /^ak ?bars\w*$/ },
+  { name: "МТС Банк", re: /^mts ?bank\w*$/ },
+  { name: "Почта Банк", re: /^pochta\w*$/ },
+  { name: "Уралсиб", re: /^uralsib\w*$/ },
+  { name: "Россельхозбанк", re: /^(rshb|rosselkhoz\w*)$/ },
+  { name: "Хоум Банк", re: /^home ?(credit|bank)\w*$/ },
+  { name: "Международный перевод", re: /^international[ _]?transfer$/ },
+  { name: "Dushanbe City Bank", re: /^dushanbe ?city ?bank$/ },
+];
+
+// Maps an exchange's payment label ("sberbankru", "İŞBANK", "Kuveyt Turk") to the same name the terms analysis uses.
+// Returns null for generic methods that are not a bank ("Bank Transfer", "Cash in Person").
+export function canonicalBank(raw: string): string | null {
+  const n = normalize(raw).replace(/[_-]+/g, " ").trim();
+  for (const extra of EXTRA_NAMES) if (extra.re.test(n)) return extra.name;
+  for (const bank of BANKS) {
+    bank.re.lastIndex = 0;
+    if (bank.re.test(n)) return bank.name;
+  }
+  return null;
+}
+
 export function analyzeAd(remarks: string, nick: string): AdAnalysis {
   const text = normalize(remarks);
   const third = detectThirdParty(remarks, nick);
@@ -262,6 +367,7 @@ export function analyzeAd(remarks: string, nick: string): AdAnalysis {
     }
   }
   return {
+    amounts: parseAmounts(remarks),
     thirdParty: third.verdict,
     thirdPartyQuote: third.quote,
     banksMentioned: banks.mentioned,

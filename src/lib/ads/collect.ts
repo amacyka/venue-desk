@@ -2,7 +2,7 @@ import { supportsFiat, type FiatId, type LiveVenueId } from "@/config/sources";
 import { mapPool } from "../book-pages";
 import { fetchText, postJson, readJson } from "../http";
 import { walletKey } from "../wallet-p2p";
-import { analyzeAd, type AdAnalysis } from "./analyze";
+import { analyzeAd, canonicalBank, type AdAnalysis } from "./analyze";
 
 // "buy" = the viewer buys USDT (seller ads); "sell" = the viewer sells USDT (buyer ads).
 export type AdSide = "buy" | "sell";
@@ -16,7 +16,8 @@ export type SearchAd = {
   availableUsdt: number;
   minFiat: number | null;
   maxFiat: number | null;
-  payments: string[];
+  payments: string[]; // banks, one name across exchanges
+  methods: string[]; // exchange payment categories that are not a bank ("Bank Transfer", "Cash in Person")
   nick: string;
   orders: number | null;
   completion: number | null; // 0..100
@@ -26,6 +27,7 @@ export type SearchAd = {
   remarksLoaded: boolean;
   requirements: string[]; // counterparty limits the exchange itself reports
   link: string | null;
+  amountConflict: boolean; // amounts named in the terms fall outside the ad's own limits
   analysis: AdAnalysis;
 };
 
@@ -46,8 +48,22 @@ const num = (value: unknown): number | null => {
 };
 const str = (value: unknown): string => (typeof value === "string" ? value : value == null ? "" : String(value));
 
-function finish(partial: Omit<SearchAd, "analysis">): SearchAd {
-  return { ...partial, analysis: analyzeAd(partial.remarks, partial.nick) };
+function finish(partial: Omit<SearchAd, "analysis" | "amountConflict" | "methods"> & { labels: string[] }): SearchAd {
+  const { labels, ...rest } = partial;
+  const payments: string[] = [];
+  const methods: string[] = [];
+  for (const label of labels) {
+    const bank = canonicalBank(label);
+    if (bank) {
+      if (!payments.includes(bank)) payments.push(bank);
+    } else if (!methods.includes(label)) methods.push(label);
+  }
+  const analysis = analyzeAd(rest.remarks, rest.nick);
+  const fixed = analysis.amounts.fixed;
+  const inLimits = (value: number) =>
+    (rest.minFiat === null || value >= rest.minFiat - 0.5) && (rest.maxFiat === null || value <= rest.maxFiat + 0.5);
+  const amountConflict = fixed.length > 0 && !fixed.some(inLimits);
+  return { ...rest, payments, methods, amountConflict, analysis };
 }
 
 /* ---------------- Binance ---------------- */
@@ -87,15 +103,20 @@ async function collectBinance(fiat: FiatId, side: AdSide): Promise<Omit<AdSearch
   const tradeType = side === "buy" ? "BUY" : "SELL";
   const rows: Record<string, unknown>[] = [];
   let error: string | null = null;
-  for (let page = 1; page <= BINANCE_PAGES; page += 1) {
+  const loadPage = async (page: number) => {
     const res = await postJson(BINANCE_LIST, { asset: "USDT", fiat, tradeType, page, rows: 20, payTypes: [] });
-    const list = (readJson(res.text) as { data?: unknown } | null)?.data;
-    if (!res.ok || !Array.isArray(list)) {
-      if (page === 1) error = `Binance ответил HTTP ${res.status || "нет ответа"}`;
-      break;
-    }
-    rows.push(...(list as Record<string, unknown>[]));
-    if (list.length < 20) break;
+    const body = readJson(res.text) as { data?: unknown; total?: unknown } | null;
+    return { res, list: Array.isArray(body?.data) ? (body.data as Record<string, unknown>[]) : null, total: num(body?.total) };
+  };
+  // First page tells how many ads exist; the rest are fetched a few at a time.
+  const first = await loadPage(1);
+  if (!first.res.ok || !first.list) {
+    error = `Binance ответил HTTP ${first.res.status || "нет ответа"}`;
+  } else {
+    rows.push(...first.list);
+    const pages = Math.min(BINANCE_PAGES, Math.ceil((first.total ?? first.list.length) / 20));
+    const rest = await mapPool(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2), 3, loadPage);
+    for (const page of rest) if (page.list) rows.push(...page.list);
   }
   const advNos = rows.map((row) => str((row.adv as Record<string, unknown> | undefined)?.advNo)).filter(Boolean);
   const { map, limited } = await binanceRemarks(advNos);
@@ -123,7 +144,7 @@ async function collectBinance(fiat: FiatId, side: AdSide): Promise<Omit<AdSearch
         availableUsdt: num(adv.tradableQuantity) ?? num(adv.surplusAmount) ?? 0,
         minFiat: num(adv.minSingleTransAmount),
         maxFiat: num(adv.dynamicMaxSingleTransAmount) ?? num(adv.maxSingleTransAmount),
-        payments: [...new Set(methods.map((m) => str(m.tradeMethodName)).filter(Boolean))],
+        labels: [...new Set(methods.map((m) => str(m.tradeMethodName)).filter(Boolean))],
         nick: str(user.nickName),
         orders: num(user.monthOrderCount),
         completion: finishRate === null ? null : Math.round(finishRate * 1000) / 10,
@@ -145,7 +166,7 @@ async function collectBinance(fiat: FiatId, side: AdSide): Promise<Omit<AdSearch
 
 const BYBIT_LIST = "https://api2.bybit.com/fiat/otc/item/online";
 const BYBIT_PAYMENTS = "https://api2.bybit.com/fiat/otc/configuration/queryAllPaymentList";
-const BYBIT_PAGES = 5; // 100 ads per page
+const BYBIT_PAGES = 10; // 100 ads per page
 let bybitNames: { at: number; map: Map<string, string> } | null = null;
 
 // Only codes whose names are confirmed; anything else is shown as its raw code rather than guessed.
@@ -172,7 +193,7 @@ async function collectBybit(fiat: FiatId, side: AdSide): Promise<Omit<AdSearchRe
   const names = await bybitPaymentNames();
   const items: Record<string, unknown>[] = [];
   let error: string | null = null;
-  for (let page = 1; page <= BYBIT_PAGES; page += 1) {
+  const loadPage = async (page: number) => {
     const res = await postJson(BYBIT_LIST, {
       tokenId: "USDT",
       currencyId: fiat,
@@ -180,14 +201,18 @@ async function collectBybit(fiat: FiatId, side: AdSide): Promise<Omit<AdSearchRe
       page: String(page),
       size: "100",
     });
-    const body = readJson(res.text) as { ret_code?: number; result?: { items?: unknown[] } } | null;
-    const list = body?.result?.items;
-    if (!res.ok || body?.ret_code !== 0 || !Array.isArray(list)) {
-      if (page === 1) error = `Bybit ответил HTTP ${res.status || "нет ответа"}`;
-      break;
-    }
-    items.push(...(list as Record<string, unknown>[]));
-    if (list.length < 100) break;
+    const body = readJson(res.text) as { ret_code?: number; result?: { items?: unknown; count?: unknown } } | null;
+    const list = body?.ret_code === 0 && Array.isArray(body.result?.items) ? (body.result.items as Record<string, unknown>[]) : null;
+    return { res, list, total: num(body?.result?.count) };
+  };
+  const first = await loadPage(1);
+  if (!first.res.ok || !first.list) {
+    error = `Bybit ответил HTTP ${first.res.status || "нет ответа"}`;
+  } else {
+    items.push(...first.list);
+    const pages = Math.min(BYBIT_PAGES, Math.ceil((first.total ?? first.list.length) / 100));
+    const rest = await mapPool(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2), 4, loadPage);
+    for (const page of rest) if (page.list) items.push(...page.list);
   }
   const ads = items.flatMap((item) => {
     const id = str(item.id);
@@ -211,7 +236,7 @@ async function collectBybit(fiat: FiatId, side: AdSide): Promise<Omit<AdSearchRe
         availableUsdt: num(item.lastQuantity) ?? 0,
         minFiat: num(item.minAmount),
         maxFiat: num(item.maxAmount),
-        payments: [...new Set(codes.map((code) => names.get(code) ?? `Bybit код ${code}`))],
+        labels: [...new Set(codes.map((code) => names.get(code) ?? `Bybit код ${code}`))],
         nick: str(item.nickName),
         orders: num(item.recentOrderNum),
         completion: num(item.recentExecuteRate),
@@ -236,20 +261,32 @@ async function collectWallet(fiat: FiatId, side: AdSide): Promise<Omit<AdSearchR
   if (!key) return { error: "Ключ Wallet P2P не задан.", notes: [], ads: [] };
   const rows: Record<string, unknown>[] = [];
   let error: string | null = null;
-  for (let page = 1; page <= 10; page += 1) {
+  const loadPage = async (page: number) => {
     const res = await fetchText(WALLET_LIST, {
       method: "POST",
       headers: { ...HEADERS, "X-API-Key": key },
       body: JSON.stringify({ cryptoCurrency: "USDT", fiatCurrency: fiat, side: side === "buy" ? "SELL" : "BUY", page, pageSize: 50 }),
     });
     const body = readJson(res.text) as { status?: string; data?: unknown } | null;
-    const list = body?.data;
-    if (!res.ok || body?.status !== "SUCCESS" || !Array.isArray(list)) {
-      if (page === 1) error = `Wallet ответил HTTP ${res.status || "нет ответа"}`;
-      break;
+    return { res, list: body?.status === "SUCCESS" && Array.isArray(body.data) ? (body.data as Record<string, unknown>[]) : null };
+  };
+  // Wallet reports no total: read three pages at a time until one comes back short.
+  for (let start = 1; start <= 10; start += 3) {
+    const batch = await mapPool([start, start + 1, start + 2].filter((p) => p <= 10), 3, loadPage);
+    let done = false;
+    for (const [i, page] of batch.entries()) {
+      if (!page.list) {
+        if (start === 1 && i === 0) error = `Wallet ответил HTTP ${page.res.status || "нет ответа"}`;
+        done = true;
+        break;
+      }
+      rows.push(...page.list);
+      if (page.list.length < 50) {
+        done = true;
+        break;
+      }
     }
-    rows.push(...(list as Record<string, unknown>[]));
-    if (list.length < 50) break;
+    if (done) break;
   }
   const ads = rows.flatMap((row) => {
     const id = str(row.id) || str(row.number);
@@ -266,7 +303,7 @@ async function collectWallet(fiat: FiatId, side: AdSide): Promise<Omit<AdSearchR
         availableUsdt: num(row.lastQuantity) ?? 0,
         minFiat: num(row.minAmount),
         maxFiat: num(row.maxAmount),
-        payments: Array.isArray(row.payments) ? [...new Set((row.payments as unknown[]).map(str).filter(Boolean))] : [],
+        labels: Array.isArray(row.payments) ? [...new Set((row.payments as unknown[]).map(str).filter(Boolean))] : [],
         nick: str(row.nickname),
         orders: num(row.orderNum),
         completion: rate === null ? null : Math.round(rate * 1000) / 10,
