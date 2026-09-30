@@ -279,7 +279,7 @@ function toAmount(raw: string, suffix: string | undefined): number | null {
 // "Беру комсу 300-700", "комиссия 1%": numbers right after these words are fees, not order amounts.
 const FEE_BEFORE = rx(/(комс\w*|комис\w*|\bfee\b|komisyon)[^\d\n]{0,15}$/);
 // Law numbers people cite ("115-ФЗ и 161-ФЗ") are not amounts either.
-const LAW_NUMBERS = new Set([115, 152, 161, 259]);
+const LAW_NUMBERS = new Set([115, 152, 161, 163, 259]);
 
 function numbersIn(line: string): number[] {
   const out: number[] = [];
@@ -292,7 +292,7 @@ function numbersIn(line: string): number[] {
     if (FEE_BEFORE.test(before) || /(комс|комис)\w*[^\d\n]{0,15}\d+\s*-\s*$/.test(before)) continue;
     const value = toAmount(m[1] ?? "", m[2]);
     if (value === null || value < 100 || value >= 100_000_000) continue;
-    if (cites && LAW_NUMBERS.has(value)) continue;
+    if (LAW_NUMBERS.has(value) && (cites || /(^|\s)по\s*(\d{3}\s*(и|,)\s*)?$/.test(before) || /^\s*(и|,)\s*\d{3}(?!\d)/.test(after))) continue;
     out.push(value);
   }
   return out;
