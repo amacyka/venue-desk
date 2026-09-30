@@ -94,17 +94,26 @@ const BANKS: Bank[] = ([
 
 // Third-party wording in the three languages.
 const THIRD_PARTY =
-  rx(/(треть\w*\s+лиц\w*|3[\s\-хгйи]*\w{0,2}\s*лиц\w*|\b3л\b|чуж\w*\s+(карт|счет|банк)\w*|ucuncu\s+(sahis|kisi)\w*|3\.?\s*(sahis|kisi)\w*|third[\s-]*part\w*|3rd[\s-]*part\w*)/g)
+  rx(/(треть\w*\s+лиц\w*|3[\s\-хгйи]*\w{0,2}\s*лиц\w*|\b3л\b|чуж\w*\s+(карт|счет|банк)\w*|ucuncu\s+(sahis|kisi|taraf|parti)\w*|3\.?\s*(sahis|kisi|taraf|parti)\w*|thirds?[\s-]*part\w*|3rd[\s-]*part\w*)/g)
 
 const NEGATIVE =
-  rx(/(\bне\s|\bнет\b|запрещ|нельзя|\bбез\b|строго|исключ|отказ|kabul\s+edilmez|kabul\s+etmiyor|kabul\s+edilmemekte|edilmez|yasak|olmaz|degil|hayir|kesinlikle|\bnot\b|\bno\b|don'?t|never|prohibit|forbidden|strictly|won'?t|reject)/g)
+  rx(/(\bне\s|\bнет\b|запрещ|нельзя|\bбез\b|строго|исключ|отказ|kabul\s+edilmez|kabul\s+etmiyor|kabul\s+edilmemekte|edilmez|calismiyor|calismam|istemiyor|etmiyor|yasak|olmaz|degil|hayir|kesinlikle|\bnot\b|\bno\b|don'?t|never|prohibit|forbidden|strictly|won'?t|reject)/g)
 
 const POSITIVE =
   rx(/(принима\w*|можно|работаю|\bда\b|допуска\w*|kabul\s+edilir|kabul\s+ediyor|kabul\s+ederim|olur|accepted|\baccept\b|allowed|\bok\b|welcome)/g)
 
 // "Only from your own account / names must match" means third parties are out.
 const OWN_ONLY =
-  rx(/(только\s+(со?\s+)?сво\w*\s+(карт|счет|банк)\w*|фио\s+\w*\s*(должн\w*\s+)?совпада|на\s+сво\w*\s+имя|владел\w*\s+карт\w*\s+(должен\s+)?совпада|kendi\s+(adiniza|adina|hesab)\w*|sadece\s+kendi|isim\w*\s+ayni|ayni\s+kisi\s+adina|own\s+account|same\s+name|name\s+must\s+match|kendihesap|sadecekendi|no3rdparty|nothirdparty)/)
+  rx(/(только\s+(со?\s+)?сво\w*\s+(карт|счет|банк)\w*|фио\s+\w*\s*(должн\w*\s+)?совпада|на\s+сво\w*\s+имя|владел\w*\s+карт\w*\s+(должен\s+)?совпада|kendi\s+(adiniza|adina|hesab)\w*|sadece\s+kendi|isim\w*\s+ayni|ayni\s+kisi\s+adina|own\s+account|same\s+name|name\s+must\s+match|name\w*[^.\n]{0,40}match\w*|kisisel\s+hesab\w*|arkadas\w*\s+hesab\w*|kendihesap|sadecekendi|no3rdparty|nothirdparty)/)
+
+// A negated verb right next to the third-party words ("не принимаю", "do not accept", "kabul etmiyorum").
+// Checked before the plain positive/negative distance test, because "принимаю" alone would win otherwise.
+const NEG_VERB = rx(
+  /(\bне\s+(принима|работа|бер|допуска|приму|беру)\w*|(do\s+not|don'?t|dont|never|not)\s+(\w+\s+(or|and)\s+)?(accept|allow|work|take)\w*|kabul\s+(etmiyor|etmem|edilmez|edilmemekte)\w*|calism(iyor|am)\w*|istemiyor\w*|\bno\s+(3rd|third)|\bбез\s+(3|трет))/g,
+);
+
+// "Only first persons / namesakes" means payments must come from the account holder.
+const FIRST_ONLY = rx(/((\b1|\bперв[а-я]{0,4})[\-\s]*[а-я]{0,3}\s*лиц|однофамил|\bfirst[\s-]*part|\b1st[\s-]*part)/);
 
 export function normalize(text: string): string {
   return text
@@ -128,11 +137,15 @@ function sentences(text: string): string[] {
     .filter(Boolean);
 }
 
-function nearest(re: RegExp, text: string, from: number, to: number): number {
+// A negation after "но / but / кроме / ama" talks about something else ("принимаю от 3 лиц, но не с Озона").
+const CONTRAST = rx(/(\bно\b|\bbut\b|кроме|except|\bama\b|haric)/);
+
+function nearest(re: RegExp, text: string, from: number, to: number, skipContrast = false): number {
   let best = Infinity;
   re.lastIndex = 0;
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const at = m.index;
+    if (skipContrast && at > to && CONTRAST.test(text.slice(to, at))) continue;
     const distance = at < from ? from - at : at > to ? at - to : 0;
     if (distance < best) best = distance;
   }
@@ -152,14 +165,16 @@ function detectThirdParty(raw: string, nick: string): { verdict: ThirdParty; quo
     THIRD_PARTY.lastIndex = 0;
     const m = THIRD_PARTY.exec(n);
     if (!m) continue;
-    const neg = nearest(NEGATIVE, n, m.index, m.index + m[0].length);
+    if (nearest(NEG_VERB, n, m.index, m.index + m[0].length, true) <= 40) return { verdict: "rejected", quote: clip(sentence) };
+    const neg = nearest(NEGATIVE, n, m.index, m.index + m[0].length, true);
     const pos = nearest(POSITIVE, n, m.index, m.index + m[0].length);
     if (neg < Infinity && neg <= pos) return { verdict: "rejected", quote: clip(sentence) };
     if (pos < Infinity && !accepted) accepted = sentence;
   }
   if (accepted) return { verdict: "accepted", quote: clip(accepted) };
   for (const sentence of list) {
-    if (OWN_ONLY.test(normalize(sentence))) return { verdict: "rejected", quote: clip(sentence) };
+    const n = normalize(sentence);
+    if (OWN_ONLY.test(n) || FIRST_ONLY.test(n)) return { verdict: "rejected", quote: clip(sentence) };
   }
   const nickNorm = normalize(nick).replace(/[\s_\-.]/g, "");
   if (OWN_ONLY.test(nickNorm) || /без3|bez3|no3/.test(nickNorm)) {
