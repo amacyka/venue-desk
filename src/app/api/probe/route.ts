@@ -1,29 +1,28 @@
-// TEMPORARY: shows which per-ad fields each P2P API returns. Remove after the ad search is built.
+// TEMPORARY: checks Binance ad-detail endpoints and the Bybit payment-name list. Remove after the ad search is built.
 import { fetchText, postJson, readJson } from "@/lib/http";
-import { walletKey } from "@/lib/wallet-p2p";
 
 export const dynamic = "force-dynamic";
 
+const UA = { "Content-Type": "application/json", Accept: "application/json", "User-Agent": "Mozilla/5.0" };
+
+async function sample(label: string, url: string, init?: RequestInit) {
+  const res = await fetchText(url, init);
+  return { label, status: res.status, hasRemarks: /"remarks"\s*:\s*"/.test(res.text), body: res.text.slice(0, 700) };
+}
+
 export async function GET() {
-  const [binance, bybit, wallet] = await Promise.all([
-    postJson("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
-      asset: "USDT", fiat: "TRY", tradeType: "BUY", page: 1, rows: 3, payTypes: [],
-    }),
-    postJson("https://api2.bybit.com/fiat/otc/item/online", {
-      tokenId: "USDT", currencyId: "RUB", side: "1", page: "1", size: "3",
-    }),
-    fetchText("https://p2p.walletbot.me/p2p/integration-api/v1/item/online", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-API-Key": walletKey() },
-      body: JSON.stringify({ cryptoCurrency: "USDT", fiatCurrency: "RUB", side: "SELL", page: 1, pageSize: 3 }),
-    }),
-  ]);
-  const b = readJson(binance.text) as { data?: unknown[] } | null;
-  const y = readJson(bybit.text) as { result?: { items?: unknown[] } } | null;
-  const w = readJson(wallet.text) as { data?: unknown[] } | null;
-  return Response.json({
-    binance: { status: binance.status, sample: b?.data?.slice(0, 3) ?? binance.text.slice(0, 500) },
-    bybit: { status: bybit.status, sample: y?.result?.items?.slice(0, 3) ?? bybit.text.slice(0, 500) },
-    wallet: { status: wallet.status, sample: w?.data?.slice(0, 3) ?? wallet.text.slice(0, 500) },
+  const list = await postJson("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+    asset: "USDT", fiat: "TRY", tradeType: "BUY", page: 1, rows: 1, payTypes: [],
   });
+  const first = (readJson(list.text) as { data?: { adv?: { advNo?: string } }[] } | null)?.data?.[0]?.adv?.advNo ?? "";
+  const n = encodeURIComponent(first);
+  const checks = await Promise.all([
+    sample("selected-adv GET", `https://p2p.binance.com/bapi/c2c/v2/public/c2c/adv/selected-adv/${n}`, { headers: UA }),
+    sample("selected-adv POST", `https://p2p.binance.com/bapi/c2c/v2/public/c2c/adv/selected-adv/${n}`, { method: "POST", headers: UA, body: "{}" }),
+    sample("friendly detail GET", `https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/detail?adNo=${n}`, { headers: UA }),
+    sample("public detail GET", `https://p2p.binance.com/bapi/c2c/v2/public/c2c/adv/detail?advNo=${n}`, { headers: UA }),
+    sample("v1 detail POST", "https://p2p.binance.com/bapi/c2c/v1/public/c2c/adv/detail", { method: "POST", headers: UA, body: JSON.stringify({ advNo: first }) }),
+    sample("bybit payments", "https://api2.bybit.com/fiat/otc/configuration/queryAllPaymentList", { method: "POST", headers: UA, body: "{}" }),
+  ]);
+  return Response.json({ listStatus: list.status, advNo: first, checks });
 }
