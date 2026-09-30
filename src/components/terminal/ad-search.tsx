@@ -295,7 +295,7 @@ export function AdSearchScreen() {
         </div>
         {skipped.length ? (
           <p className="text-xs text-muted-foreground">
-            {skipped.map((id) => SOURCE_META[id].short).join(", ")}: {FIAT_META[market.fiat].name.toLowerCase()} на этой площадке не подключена.
+            {skipped.map((id) => SOURCE_META[id].short).join(", ")}: валюта «{FIAT_META[market.fiat].name}» на этой площадке не подключена.
           </p>
         ) : null}
 

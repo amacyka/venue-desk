@@ -262,7 +262,7 @@ const AMOUNT_TRIGGER = rx(
 const MULTIPLE = rx(/(кратн\w*|multiple\s+of|katlari)/);
 const MIN_WORD = rx(/(свыше|не\s+менее|не\s+меньше|\bот|больше|минимум|minimum|\bmin\b|en\s+az|from)\s*$/);
 // Numbers like 29400, 29 400, 92.700, 175 800, 49к, 10 тыс
-const NUMBER = /(\d{1,3}(?:(?:[  ]{1,2}|[.,])\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(к|k|тыс\w*|т\.?\s?р\.?)?(?![\d])/giu;
+const NUMBER = /(\d{1,3}(?:(?:[  ]{1,2}|[.,])\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(к|k|тыс\w*|т\.?\s?р\.?|т(?=[\s₽/),.;]|$))?(?![\d])/giu;
 // Numbers that are clearly not amounts: counts, percents, minutes, laws ("115-ФЗ")
 const NOT_AMOUNT_AFTER = rx(/^\s*(%|\+?\s*сдел|лиц|отзыв|мин|час|дн|сек|раз|шт|-?\s*фз|-?\s*ф3|usdt|order|ордер\w*\s+(в|за)|islem|gun|p2p)/);
 
@@ -276,14 +276,23 @@ function toAmount(raw: string, suffix: string | undefined): number | null {
   return value;
 }
 
+// "Беру комсу 300-700", "комиссия 1%": numbers right after these words are fees, not order amounts.
+const FEE_BEFORE = rx(/(комс\w*|комис\w*|\bfee\b|komisyon)[^\d\n]{0,15}$/);
+// Law numbers people cite ("115-ФЗ и 161-ФЗ") are not amounts either.
+const LAW_NUMBERS = new Set([115, 152, 161, 259]);
+
 function numbersIn(line: string): number[] {
   const out: number[] = [];
+  const cites = /ф[з3]|закон/.test(line);
   NUMBER.lastIndex = 0;
   for (let m = NUMBER.exec(line); m; m = NUMBER.exec(line)) {
     const after = line.slice(m.index + m[0].length, m.index + m[0].length + 14);
     if (NOT_AMOUNT_AFTER.test(after)) continue;
+    const before = line.slice(Math.max(0, m.index - 30), m.index);
+    if (FEE_BEFORE.test(before) || /(комс|комис)\w*[^\d\n]{0,15}\d+\s*-\s*$/.test(before)) continue;
     const value = toAmount(m[1] ?? "", m[2]);
     if (value === null || value < 100 || value >= 100_000_000) continue;
+    if (cites && LAW_NUMBERS.has(value)) continue;
     out.push(value);
   }
   return out;
