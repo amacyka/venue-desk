@@ -190,7 +190,7 @@ async function bybitPaymentNames(): Promise<Map<string, string>> {
 }
 
 async function collectBybit(fiat: FiatId, side: AdSide): Promise<Omit<AdSearchResult, "venue" | "fiat" | "side" | "fetchedAt">> {
-  const names = await bybitPaymentNames();
+  const namesLoad = bybitPaymentNames(); // runs alongside the first page
   const items: Record<string, unknown>[] = [];
   let error: string | null = null;
   const loadPage = async (page: number) => {
@@ -211,9 +211,10 @@ async function collectBybit(fiat: FiatId, side: AdSide): Promise<Omit<AdSearchRe
   } else {
     items.push(...first.list);
     const pages = Math.min(BYBIT_PAGES, Math.ceil((first.total ?? first.list.length) / 100));
-    const rest = await mapPool(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2), 4, loadPage);
+    const rest = await mapPool(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2), 9, loadPage);
     for (const page of rest) if (page.list) items.push(...page.list);
   }
+  const names = await namesLoad;
   const ads = items.flatMap((item) => {
     const id = str(item.id);
     const price = num(item.price);

@@ -262,7 +262,7 @@ const AMOUNT_TRIGGER = rx(
 const MULTIPLE = rx(/(кратн\w*|multiple\s+of|katlari)/);
 const MIN_WORD = rx(/(свыше|не\s+менее|не\s+меньше|\bот|больше|минимум|minimum|\bmin\b|en\s+az|from)\s*$/);
 // Numbers like 29400, 29 400, 92.700, 175 800, 49к, 10 тыс
-const NUMBER = /(\d{1,3}(?:[  .,]\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(к|k|тыс\w*|т\.?\s?р\.?)?(?![\d])/giu;
+const NUMBER = /(\d{1,3}(?:(?:[  ]{1,2}|[.,])\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(к|k|тыс\w*|т\.?\s?р\.?)?(?![\d])/giu;
 // Numbers that are clearly not amounts: counts, percents, minutes, laws ("115-ФЗ")
 const NOT_AMOUNT_AFTER = rx(/^\s*(%|\+?\s*сдел|лиц|отзыв|мин|час|дн|сек|раз|шт|-?\s*фз|-?\s*ф3|usdt|order|ордер\w*\s+(в|за)|islem|gun|p2p)/);
 
@@ -311,8 +311,9 @@ export function parseAmounts(remarks: string): AmountTerms {
       continue;
     }
     const idx = n.search(/\d/);
-    const strict = rx(/(строго|ровно|только|exact)/).test(n);
-    if (!strict && MIN_WORD.test(n.slice(0, idx))) {
+    // "от 5 000" / "свыше 1000" right before the number is a minimum, even inside "только от 5 000".
+    const exact = rx(/(ровно|exact)/).test(n);
+    if (!exact && MIN_WORD.test(n.slice(0, idx))) {
       if (result.minAmount === null) result.minAmount = nums[0] ?? null;
       if (!result.quote) result.quote = clip(quote, 140);
       continue;
