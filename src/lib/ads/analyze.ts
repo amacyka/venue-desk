@@ -94,7 +94,7 @@ const BANKS: Bank[] = ([
 
 // Third-party wording in the three languages.
 const THIRD_PARTY =
-  rx(/(треть\w*\s+лиц\w*|3[\s\-хгйи]*\w{0,2}\s*лиц\w*|\b3л\b|чуж\w*\s+(карт|счет|банк)\w*|ucuncu\s+(sahis|kisi|taraf|parti)\w*|3\.?\s*(sahis|kisi|taraf|parti)\w*|thirds?[\s-]*part\w*|3rd[\s-]*part\w*)/g)
+  rx(/(треть\w*\s+лиц\w*|3[\s\-хгйи]*\w{0,2}\s*лиц\w*|\b3л\b|чуж\w*\s+(карт|счет|банк)\w*|ucuncu\s+(sahis|kisi|taraf|parti)\w*|3[.\-]?\s*(cu|ncu|uncu)?\s*(sahis|kisi|taraf|parti)\w*|thirds?[\s-]*part\w*|3rd[\s-]*part\w*)/g)
 
 const NEGATIVE =
   rx(/(\bне\s|\bнет\b|запрещ|нельзя|\bбез\b|строго|исключ|отказ|kabul\s+edilmez|kabul\s+etmiyor|kabul\s+edilmemekte|edilmez|calismiyor|calismam|istemiyor|etmiyor|yasak|olmaz|degil|hayir|kesinlikle|\bnot\b|\bno\b|don'?t|never|prohibit|forbidden|strictly|won'?t|reject)/g)
@@ -111,6 +111,9 @@ const OWN_ONLY =
 const NEG_VERB = rx(
   /(\bне\s+(принима|работа|бер|допуска|приму|беру)\w*|(do\s+not|don'?t|dont|never|not)\s+(\w+\s+(or|and)\s+)?(accept|allow|work|take)\w*|kabul\s+(etmiyor|etmem|edilmez|edilmemekte)\w*|calism(iyor|am)\w*|istemiyor\w*|\bno\s+(3rd|third)|\bбез\s+(3|трет))/g,
 );
+
+// "Приму от любых лиц", "1-3 лицо", "1-х и 3-х лиц": both the holder and third parties are fine.
+const ANY_OK = rx(/(любых\s+лиц|любого\s+лица|\b1\s*[-\/,и]\s*3\b|\b1[-\s]*[а-я]{0,3}\s+и\s+3|any\s+(person|party|name))/);
 
 // "Only first persons / namesakes" means payments must come from the account holder.
 const FIRST_ONLY = rx(/((\b1|\bперв[а-я]{0,4})[\-\s]*[а-я]{0,3}\s*лиц|однофамил|\bfirst[\s-]*part|\b1st[\s-]*part)/);
@@ -166,11 +169,16 @@ function detectThirdParty(raw: string, nick: string): { verdict: ThirdParty; quo
     const m = THIRD_PARTY.exec(n);
     if (!m) continue;
     if (nearest(NEG_VERB, n, m.index, m.index + m[0].length, true) <= 40) return { verdict: "rejected", quote: clip(sentence) };
+    if (ANY_OK.test(n)) {
+      if (!accepted) accepted = sentence;
+      continue;
+    }
     const neg = nearest(NEGATIVE, n, m.index, m.index + m[0].length, true);
     const pos = nearest(POSITIVE, n, m.index, m.index + m[0].length);
     if (neg < Infinity && neg <= pos) return { verdict: "rejected", quote: clip(sentence) };
     if (pos < Infinity && !accepted) accepted = sentence;
   }
+  if (!accepted) accepted = list.find((sentence) => ANY_OK.test(normalize(sentence)) && /лиц|person|party/.test(normalize(sentence))) ?? "";
   if (accepted) return { verdict: "accepted", quote: clip(accepted) };
   for (const sentence of list) {
     const n = normalize(sentence);
