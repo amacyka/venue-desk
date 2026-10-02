@@ -1,4 +1,5 @@
 import { after } from "next/server";
+import { runFullBook } from "@/lib/full-book";
 import { loadVenueBooks } from "@/lib/p2p-feed";
 import { storeReady } from "@/lib/store";
 import { runSnapshot } from "@/lib/volume";
@@ -16,5 +17,7 @@ export async function GET(request: Request) {
   const job = () => runSnapshot((id) => loadVenueBooks(id, true));
   if (new URL(request.url).searchParams.get("wait")) return Response.json({ ...(await job()), at });
   after(job);
+  // The slow whole-book pass rides on the same call; its own lock keeps it to once per 15 minutes.
+  after(() => runFullBook().catch(() => undefined));
   return Response.json({ ok: true, started: true, at });
 }

@@ -18,7 +18,7 @@ export type FullBook = { buy: FullSide; sell: FullSide };
 
 const KEY = "full:hist";
 const LOCK_KEY = "full:lock";
-const LOCK_MS = 10 * 60_000;
+const LOCK_MS = 15 * 60_000;
 const KEEP_MS = 26 * 3_600_000;
 const DAY_MS = 24 * 3_600_000;
 
@@ -34,7 +34,7 @@ export type FullBookResult = { ok: boolean; skipped?: string; markets?: number; 
 export async function runFullBook(): Promise<FullBookResult> {
   if (!storeReady()) return { ok: false, error: "Хранилище не подключено" };
   const [lock] = await pipeline([["SET", LOCK_KEY, String(Date.now()), "NX", "PX", LOCK_MS]]);
-  if (lock !== "OK") return { ok: true, skipped: "полный проход уже был меньше 10 минут назад" };
+  if (lock !== "OK") return { ok: true, skipped: "полный проход уже был меньше 15 минут назад" };
   const m: Record<string, Cell> = {};
   const incomplete: string[] = [];
   for (const venue of LIVE_VENUES) {
