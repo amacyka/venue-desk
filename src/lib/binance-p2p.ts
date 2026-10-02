@@ -9,6 +9,9 @@ const PAGE_ROWS = 20;
 // best-priced pages (sorted by price, they hold everything near the market) and asks two pages at a time.
 const MAX_PAGES = 6;
 const CONCURRENCY = 2;
+// The rare full pass (every 15 minutes) reads every page, slowly, to get the whole book.
+const FULL_PAUSE_MS = 150;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function parseBinanceP2pPage(body: unknown): P2pPage | null {
   if (!body || typeof body !== "object") return null;
@@ -41,7 +44,8 @@ export function parseBinanceP2pPage(body: unknown): P2pPage | null {
   return { total: Number(root.total) || ads.length, ads };
 }
 
-async function loadPage(fiat: string, tradeType: "BUY" | "SELL", page: number): Promise<P2pPage | string> {
+async function loadPage(fiat: string, tradeType: "BUY" | "SELL", page: number, full = false): Promise<P2pPage | string> {
+  if (full && page > 1) await sleep(FULL_PAUSE_MS);
   const res = await postJson(URL, {
     asset: "USDT",
     fiat,
@@ -54,8 +58,8 @@ async function loadPage(fiat: string, tradeType: "BUY" | "SELL", page: number): 
   return parseBinanceP2pPage(readJson(res.text)) ?? `Binance P2P ${fiat}: в ответе нет объявлений`;
 }
 
-function loadSide(fiat: string, tradeType: "BUY" | "SELL"): Promise<P2pPage | string> {
-  return loadWholeBook((page) => loadPage(fiat, tradeType, page), PAGE_ROWS, CONCURRENCY, MAX_PAGES);
+function loadSide(fiat: string, tradeType: "BUY" | "SELL", full = false): Promise<P2pPage | string> {
+  return loadWholeBook((page) => loadPage(fiat, tradeType, page, full), PAGE_ROWS, CONCURRENCY, full ? 260 : MAX_PAGES);
 }
 
 function paymentNames(value: unknown): string[] {
@@ -69,7 +73,7 @@ function paymentNames(value: unknown): string[] {
   return [...new Set(names)];
 }
 
-export async function loadBinanceBooks(fiats: readonly string[] = VENUE_FIATS.binance): Promise<{
+export async function loadBinanceBooks(fiats: readonly string[] = VENUE_FIATS.binance, full = false): Promise<{
   fetchedAt: string;
   activityHint: string;
   error: string | null;
@@ -77,7 +81,15 @@ export async function loadBinanceBooks(fiats: readonly string[] = VENUE_FIATS.bi
 }> {
   const books = await Promise.all(
     fiats.filter(isFiat).filter((fiat) => supportsFiat("binance", fiat)).map(async (fiat) => {
-      const [sell, buy] = await Promise.all([loadSide(fiat, "BUY"), loadSide(fiat, "SELL")]);
+      // The full pass reads one side at a time to stay gentle.
+      let sell: P2pPage | string;
+      let buy: P2pPage | string;
+      if (full) {
+        sell = await loadSide(fiat, "BUY", true);
+        buy = await loadSide(fiat, "SELL", true);
+      } else {
+        [sell, buy] = await Promise.all([loadSide(fiat, "BUY"), loadSide(fiat, "SELL")]);
+      }
       const errors = [sell, buy].filter((side): side is string => typeof side === "string");
       return {
         fiat,

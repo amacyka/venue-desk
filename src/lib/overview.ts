@@ -1,5 +1,6 @@
 import { FIAT_META, isFiat, periodById, type FiatId, type LiveVenueId, type PeriodId } from "@/config/sources";
 import { buildFiatAnalytics, filterPage, headline, type BookSide, type P2pFiatAnalytics } from "./p2p-view";
+import type { FullBook } from "./full-book";
 import type { LiquidityStats } from "./liquidity-stats";
 import type { VolumeSummary } from "./volume";
 
@@ -27,6 +28,8 @@ export type MarketPayload = {
   volume?: { buy: VolumeSummary | null; sell: VolumeSummary | null };
   // Liquidity within 2% over the last 24 hours, from the stored history.
   liquidity24h?: { buy: LiquidityStats | null; sell: LiquidityStats | null };
+  // The whole book from the slow pass every ~15 minutes, with its 24h average.
+  fullBook?: FullBook | null;
 };
 
 export type VenuePayload = {

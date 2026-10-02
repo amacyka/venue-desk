@@ -107,6 +107,7 @@ function VenueBlock({ venue }: { venue: VenuePayload }) {
     : filters.side === "buy"
       ? "Сколько USDT продавцы выставили в пределах 2% от лучшей цены. Средняя за сутки появится, когда накопятся замеры."
       : "Сколько USDT покупатели готовы купить в пределах 2% от лучшей цены (до 10 000 с одного объявления). Средняя за сутки появится, когда накопятся замеры.";
+  const whole = (filters.side === "buy" ? market.fullBook?.buy : market.fullBook?.sell) ?? null;
   const volume = filters.side === "buy" ? market.volume?.buy ?? null : market.volume?.sell ?? null;
   const otherVolume = filters.side === "buy" ? market.volume?.sell ?? null : market.volume?.buy ?? null;
   const volumeHint =
@@ -142,7 +143,14 @@ function VenueBlock({ venue }: { venue: VenuePayload }) {
             { label: "Максимум за сутки", value: dayHigh ? `${formatUsdt(dayHigh.value)} USDT · ${dayHigh.at}` : "—" },
             { label: "Сутки назад", value: day?.dayAgo != null ? `${formatUsdt(day.dayAgo)} USDT` : "ещё нет замера" },
             { label: "Сейчас в пределах 1% / 5%", value: `${formatUsdt(depth.within1)} / ${formatUsdt(depth.within5)}` },
-            { label: "Весь стакан", value: `${formatUsdt(depth.total)} USDT` },
+            {
+              label: "Весь стакан",
+              value: whole ? `${formatUsdt(whole.total)} USDT · ${minutesAgo(whole.at)}` : `${formatUsdt(depth.total)} USDT`,
+            },
+            {
+              label: "Весь стакан, средняя 24 ч",
+              value: whole?.avg != null ? `${formatUsdt(whole.avg)} USDT${whole.hours < 24 ? ` (за ${whole.hours} ч)` : ""}` : "копится",
+            },
             {
               label: view.trafficScope === "sample" ? "Объявлений в выборке" : "Активных объявлений",
               value: formatCount(view.trafficAds),
@@ -328,4 +336,9 @@ function clock(iso: string): string {
   const at = new Date(iso);
   const time = at.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   return at.toDateString() === new Date().toDateString() ? time : `вчера ${time}`;
+}
+
+function minutesAgo(iso: string): string {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
+  return minutes < 1 ? "только что" : `${minutes} мин назад`;
 }

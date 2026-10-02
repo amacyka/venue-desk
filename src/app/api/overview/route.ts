@@ -1,6 +1,7 @@
 import { after } from "next/server";
 import { isLiveVenue, isPeriod, SOURCE_META, type LiveVenueId, type PeriodId } from "@/config/sources";
 import { presentBook, venueStatus, withinPeriod, type OverviewResponse } from "@/lib/overview";
+import { readFullHistory, summarizeFull } from "@/lib/full-book";
 import { liquidityStats } from "@/lib/liquidity-stats";
 import { loadVenueBooks } from "@/lib/p2p-feed";
 import { readHistory } from "@/lib/p2p-history";
@@ -24,7 +25,7 @@ export async function GET(request: Request) {
   const allHistory = (await readHistory(venues)).filter((point) => venues.includes(point.venue));
   const history = withinPeriod(allHistory, period);
   const tracking = storeReady();
-  const aggregate = tracking ? await readAggregate() : null;
+  const [aggregate, fullHistory] = tracking ? await Promise.all([readAggregate(), readFullHistory()]) : ([null, null] as const);
   // Every visit also nudges the minute snapshot (a lock keeps it to one run per minute), so volume keeps
   // counting even between the external scheduler's calls.
   if (tracking) after(() => runSnapshot((id) => loadVenueBooks(id)).catch(() => undefined));
@@ -55,6 +56,7 @@ export async function GET(request: Request) {
         if (!market) return [];
         const own = allHistory.filter((point) => point.venue === venue.id && point.fiat === market.fiat);
         market.liquidity24h = { buy: liquidityStats(own, "liquidityUsdt"), sell: liquidityStats(own, "liquiditySellUsdt") };
+        market.fullBook = summarizeFull(fullHistory, `${venue.id}:${market.fiat}`);
         market.volume = {
           buy: summarize(aggregate, marketKey(venue.id, market.fiat, "buy")),
           sell: summarize(aggregate, marketKey(venue.id, market.fiat, "sell")),
