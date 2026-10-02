@@ -35,13 +35,14 @@ export async function loadWholeBook(
   load: (page: number) => Promise<P2pPage | string>,
   pageSize: number,
   concurrency = 6,
+  maxPages = MAX_PAGES,
 ): Promise<P2pPage | string> {
   const first = await load(1);
   if (typeof first === "string") return first;
   const step =
     first.ads.length > 0 && first.ads.length < pageSize && first.total > first.ads.length ? first.ads.length : pageSize;
   const needed = Math.max(1, Math.ceil(first.total / step));
-  const pages = Math.min(MAX_PAGES, needed);
+  const pages = Math.min(maxPages, MAX_PAGES, needed);
   if (pages === 1) return { ...first, truncated: false };
   const rest = await mapPool(
     Array.from({ length: pages - 1 }, (_, index) => index + 2),
@@ -57,5 +58,5 @@ export async function loadWholeBook(
     }
     ok.push(page);
   }
-  return mergeBook(ok, first.total, !failed && needed <= MAX_PAGES);
+  return mergeBook(ok, first.total, !failed && needed <= pages);
 }

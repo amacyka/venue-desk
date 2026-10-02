@@ -5,6 +5,10 @@ import { buildFiatAnalytics, type BookSide, type P2pPage, type P2pSnapshot } fro
 
 const URL = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search";
 const PAGE_ROWS = 20;
+// Binance answers HTTP 429 when asked too often. The site reads the book every minute, so it takes only the
+// best-priced pages (sorted by price, they hold everything near the market) and asks two pages at a time.
+const MAX_PAGES = 6;
+const CONCURRENCY = 2;
 
 export function parseBinanceP2pPage(body: unknown): P2pPage | null {
   if (!body || typeof body !== "object") return null;
@@ -51,7 +55,7 @@ async function loadPage(fiat: string, tradeType: "BUY" | "SELL", page: number): 
 }
 
 function loadSide(fiat: string, tradeType: "BUY" | "SELL"): Promise<P2pPage | string> {
-  return loadWholeBook((page) => loadPage(fiat, tradeType, page), PAGE_ROWS, 8);
+  return loadWholeBook((page) => loadPage(fiat, tradeType, page), PAGE_ROWS, CONCURRENCY, MAX_PAGES);
 }
 
 function paymentNames(value: unknown): string[] {
