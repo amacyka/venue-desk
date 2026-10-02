@@ -96,6 +96,9 @@ function VenueBlock({ venue }: { venue: VenuePayload }) {
   const focusLiquidity = filters.side === "buy" ? buyLiquidity : sellLiquidity;
   const depth = (filters.side === "buy" ? view.depthBuy : view.depthSell) ?? { within1: 0, within2: 0, within5: 0, total: 0, ads: 0 };
   const day = (filters.side === "buy" ? market.liquidity24h?.buy : market.liquidity24h?.sell) ?? null;
+  // The current reading counts too, so "now" never sits outside the day's range.
+  const dayLow = day ? (focusLiquidity < day.min ? { value: focusLiquidity, at: "сейчас" } : { value: day.min, at: clock(day.minAt) }) : null;
+  const dayHigh = day ? (focusLiquidity > day.max ? { value: focusLiquidity, at: "сейчас" } : { value: day.max, at: clock(day.maxAt) }) : null;
   const dayDelta = day?.dayAgo ? ((focusLiquidity - day.dayAgo) / day.dayAgo) * 100 : null;
   const liquidityHint = day
     ? `Средняя за ${day.hours < 24 ? `${day.hours} ч — данные копятся до суток` : "последние 24 часа"}: ${
@@ -135,8 +138,8 @@ function VenueBlock({ venue }: { venue: VenuePayload }) {
           series={points.map((point) => (filters.side === "buy" ? point.liquidityUsdt : point.liquiditySellUsdt))}
           rows={[
             { label: "Сейчас", value: `${formatUsdt(focusLiquidity)} USDT` },
-            { label: "Минимум за сутки", value: day ? `${formatUsdt(day.min)} USDT · ${clock(day.minAt)}` : "—" },
-            { label: "Максимум за сутки", value: day ? `${formatUsdt(day.max)} USDT · ${clock(day.maxAt)}` : "—" },
+            { label: "Минимум за сутки", value: dayLow ? `${formatUsdt(dayLow.value)} USDT · ${dayLow.at}` : "—" },
+            { label: "Максимум за сутки", value: dayHigh ? `${formatUsdt(dayHigh.value)} USDT · ${dayHigh.at}` : "—" },
             { label: "Сутки назад", value: day?.dayAgo != null ? `${formatUsdt(day.dayAgo)} USDT` : "ещё нет замера" },
             { label: "Сейчас в пределах 1% / 5%", value: `${formatUsdt(depth.within1)} / ${formatUsdt(depth.within5)}` },
             { label: "Весь стакан", value: `${formatUsdt(depth.total)} USDT` },
