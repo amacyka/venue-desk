@@ -10,7 +10,8 @@ const PAGE_ROWS = 20;
 const MAX_PAGES = 6;
 const CONCURRENCY = 2;
 // The rare full pass (every 15 minutes) reads every page, slowly, to get the whole book.
-const FULL_PAUSE_MS = 150;
+const FULL_PAUSE_MS = 100;
+const FULL_CONCURRENCY = 3;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function parseBinanceP2pPage(body: unknown): P2pPage | null {
@@ -59,7 +60,7 @@ async function loadPage(fiat: string, tradeType: "BUY" | "SELL", page: number, f
 }
 
 function loadSide(fiat: string, tradeType: "BUY" | "SELL", full = false): Promise<P2pPage | string> {
-  return loadWholeBook((page) => loadPage(fiat, tradeType, page, full), PAGE_ROWS, CONCURRENCY, full ? 260 : MAX_PAGES);
+  return loadWholeBook((page) => loadPage(fiat, tradeType, page, full), PAGE_ROWS, full ? FULL_CONCURRENCY : CONCURRENCY, full ? 260 : MAX_PAGES);
 }
 
 function paymentNames(value: unknown): string[] {

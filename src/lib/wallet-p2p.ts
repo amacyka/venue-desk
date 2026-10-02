@@ -69,13 +69,13 @@ async function loadPage(key: string, fiat: string, side: Side, page: number): Pr
 }
 
 // The API does not report a total, so pages are read in small batches until one comes back short.
-async function loadSide(key: string, fiat: string, side: Side): Promise<P2pPage | string> {
+async function loadSide(key: string, fiat: string, side: Side, maxPages = MAX_PAGES): Promise<P2pPage | string> {
   const pages: P2pPage[] = [];
   let next = 1;
   let done = false;
   let failed = false;
-  while (!done && next <= MAX_PAGES) {
-    const batch = Array.from({ length: Math.min(BATCH, MAX_PAGES - next + 1) }, (_, i) => next + i);
+  while (!done && next <= maxPages) {
+    const batch = Array.from({ length: Math.min(BATCH, maxPages - next + 1) }, (_, i) => next + i);
     next += batch.length;
     const results = await mapPool(batch, BATCH, (page) => loadPage(key, fiat, side, page));
     for (const result of results) {
@@ -96,7 +96,8 @@ async function loadSide(key: string, fiat: string, side: Side): Promise<P2pPage 
   return mergeBook(pages, total, done && !failed);
 }
 
-export async function loadWalletBooks(fiats: readonly string[] = VENUE_FIATS.wallet): Promise<{
+// `full` (the 15-minute whole-book pass) lifts the usual 10-page limit.
+export async function loadWalletBooks(fiats: readonly string[] = VENUE_FIATS.wallet, full = false): Promise<{
   fetchedAt: string;
   activityHint: string;
   error: string | null;
@@ -116,7 +117,8 @@ export async function loadWalletBooks(fiats: readonly string[] = VENUE_FIATS.wal
   const books = await Promise.all(
     fiats.filter(isFiat).map(async (fiat) => {
       // SELL ads = makers selling USDT (you buy); BUY ads = makers buying USDT (you sell).
-      const [sell, buy] = await Promise.all([loadSide(key, fiat, "SELL"), loadSide(key, fiat, "BUY")]);
+      const pages = full ? 60 : MAX_PAGES;
+      const [sell, buy] = await Promise.all([loadSide(key, fiat, "SELL", pages), loadSide(key, fiat, "BUY", pages)]);
       const errors = [sell, buy].filter((side): side is string => typeof side === "string");
       return {
         fiat,
