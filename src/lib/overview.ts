@@ -1,5 +1,6 @@
 import { FIAT_META, isFiat, periodById, type FiatId, type LiveVenueId, type PeriodId } from "@/config/sources";
 import { buildFiatAnalytics, filterPage, headline, type BookSide, type P2pFiatAnalytics } from "./p2p-view";
+import type { LiquidityStats } from "./liquidity-stats";
 import type { VolumeSummary } from "./volume";
 
 export type HistoryPoint = {
@@ -24,6 +25,8 @@ export type MarketPayload = {
   view: P2pFiatAnalytics;
   // Estimated 24h traded volume from snapshots; "buy" = what people bought from sellers.
   volume?: { buy: VolumeSummary | null; sell: VolumeSummary | null };
+  // Liquidity within 2% over the last 24 hours, from the stored history.
+  liquidity24h?: { buy: LiquidityStats | null; sell: LiquidityStats | null };
 };
 
 export type VenuePayload = {

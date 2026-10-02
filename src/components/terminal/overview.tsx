@@ -95,6 +95,15 @@ function VenueBlock({ venue }: { venue: VenuePayload }) {
   const sellLiquidity = sideLiquidity(view, "sell");
   const focusLiquidity = filters.side === "buy" ? buyLiquidity : sellLiquidity;
   const depth = (filters.side === "buy" ? view.depthBuy : view.depthSell) ?? { within1: 0, within2: 0, within5: 0, total: 0, ads: 0 };
+  const day = (filters.side === "buy" ? market.liquidity24h?.buy : market.liquidity24h?.sell) ?? null;
+  const dayDelta = day?.dayAgo ? ((focusLiquidity - day.dayAgo) / day.dayAgo) * 100 : null;
+  const liquidityHint = day
+    ? `Средняя за ${day.hours < 24 ? `${day.hours} ч — данные копятся до суток` : "последние 24 часа"}: ${
+        filters.side === "buy" ? "USDT у продавцов" : "USDT у покупателей (до 10 000 с объявления)"
+      } в пределах 2% от лучшей цены. Замер раз в 10 минут${data?.payment ? ", без фильтра оплаты" : ""}.`
+    : filters.side === "buy"
+      ? "Сколько USDT продавцы выставили в пределах 2% от лучшей цены. Средняя за сутки появится, когда накопятся замеры."
+      : "Сколько USDT покупатели готовы купить в пределах 2% от лучшей цены (до 10 000 с одного объявления). Средняя за сутки появится, когда накопятся замеры.";
   const volume = filters.side === "buy" ? market.volume?.buy ?? null : market.volume?.sell ?? null;
   const otherVolume = filters.side === "buy" ? market.volume?.sell ?? null : market.volume?.buy ?? null;
   const volumeHint =
@@ -118,21 +127,19 @@ function VenueBlock({ venue }: { venue: VenuePayload }) {
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="Ликвидность"
-          period={period}
-          value={formatUsdt(focusLiquidity)}
+          period="24 часа"
+          value={formatUsdt(day ? day.avg : focusLiquidity)}
           unit="USDT"
-          hint={
-            filters.side === "buy"
-              ? "Сколько USDT продавцы выставили в пределах 2% от лучшей цены"
-              : "Сколько USDT покупатели готовы купить в пределах 2% от лучшей цены (до 10 000 с одного объявления)"
-          }
-          delta={changeFor(points, filters.side === "buy" ? "liquidityUsdt" : "liquiditySellUsdt", focusLiquidity)}
+          hint={liquidityHint}
+          delta={day ? dayDelta : changeFor(points, filters.side === "buy" ? "liquidityUsdt" : "liquiditySellUsdt", focusLiquidity)}
           series={points.map((point) => (filters.side === "buy" ? point.liquidityUsdt : point.liquiditySellUsdt))}
           rows={[
-            { label: "В пределах 1%", value: `${formatUsdt(depth.within1)} USDT` },
-            { label: "В пределах 5%", value: `${formatUsdt(depth.within5)} USDT` },
+            { label: "Сейчас", value: `${formatUsdt(focusLiquidity)} USDT` },
+            { label: "Минимум за сутки", value: day ? `${formatUsdt(day.min)} USDT · ${clock(day.minAt)}` : "—" },
+            { label: "Максимум за сутки", value: day ? `${formatUsdt(day.max)} USDT · ${clock(day.maxAt)}` : "—" },
+            { label: "Сутки назад", value: day?.dayAgo != null ? `${formatUsdt(day.dayAgo)} USDT` : "ещё нет замера" },
+            { label: "Сейчас в пределах 1% / 5%", value: `${formatUsdt(depth.within1)} / ${formatUsdt(depth.within5)}` },
             { label: "Весь стакан", value: `${formatUsdt(depth.total)} USDT` },
-            { label: filters.side === "buy" ? "К продаже (2%)" : "К покупке (2%)", value: `${formatUsdt(filters.side === "buy" ? sellLiquidity : buyLiquidity)} USDT` },
             {
               label: view.trafficScope === "sample" ? "Объявлений в выборке" : "Активных объявлений",
               value: formatCount(view.trafficAds),
@@ -311,4 +318,11 @@ function SourceCard({ id }: { id: SourceId }) {
       </div>
     </Panel>
   );
+}
+
+// "14:20" for today, "вчера 14:20" for yesterday — in the viewer's own time zone.
+function clock(iso: string): string {
+  const at = new Date(iso);
+  const time = at.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  return at.toDateString() === new Date().toDateString() ? time : `вчера ${time}`;
 }
